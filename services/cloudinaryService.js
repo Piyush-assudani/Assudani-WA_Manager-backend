@@ -1,46 +1,21 @@
-const cloudinary = require("cloudinary").v2;
-const streamifier = require("streamifier");
+/**
+ * Media Storage Service - Local Server Storage Mode
+ * All images, videos, audio, and documents are stored directly on the local server.
+ */
+const { uploadFileToServer, uploadBufferToServer, deleteFileFromServer } = require("./localStorageService");
 
-
-
-cloudinary.config({
-  secure: true,
-});
-
-const uploadBufferToCloudinary = (buffer, folder = "wp_automation", resourceType = "auto") => {
-  return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        folder,
-        resource_type: resourceType,
-      },
-      (error, result) => {
-        if (error) {
-          console.error("❌ Cloudinary upload error:", error);
-          return reject(error);
-        }
-        resolve(result.secure_url);
-      }
-    );
-
-    streamifier.createReadStream(buffer).pipe(uploadStream);
-  });
+const uploadBufferToCloudinary = async (buffer, folder = "inbound", resourceType = "auto") => {
+  return await uploadBufferToServer(buffer, folder, resourceType);
 };
 
-const uploadFileToCloudinary = async (filePath, folder = "wp_automation", resourceType = "auto") => {
-  try {
-    const result = await cloudinary.uploader.upload(filePath, {
-      folder,
-      resource_type: resourceType,
-    });
-    return result.secure_url;
-  } catch (error) {
-    console.error("❌ Cloudinary file upload error:", error);
-    throw error;
-  }
+const uploadFileToCloudinary = async (filePath, folder = "library", resourceType = "auto") => {
+  return await uploadFileToServer(filePath, folder, resourceType);
 };
 
 module.exports = {
   uploadBufferToCloudinary,
   uploadFileToCloudinary,
+  uploadBufferToServer,
+  uploadFileToServer,
+  deleteFileFromServer,
 };

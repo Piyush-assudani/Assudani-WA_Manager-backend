@@ -1,5 +1,7 @@
 const express = require("express");
 const http = require("http");
+const path = require("path");
+const fs = require("fs");
 
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
@@ -52,14 +54,31 @@ app.use((req, res, next) => {
   next();
 });
 
+app.disable("x-powered-by");
+
+const rateLimit = require("express-rate-limit");
+
+// Global API rate limit: 1500 requests per 15 minutes per IP
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down." },
+});
+
+// Strict Auth rate limiter: 25 attempts per 15 minutes to prevent brute-forcing
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 25,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts from this IP. Please try again after 15 minutes." },
+});
+
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-
-
-
-
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
 const apiRoutes = require("./routes/api");
 const contactRoutes = require("./routes/contacts");
@@ -72,8 +91,8 @@ const templateRoutes = require("./routes/templates");
 const mediaRoutes = require("./routes/media");
 const dashboardRoutes = require("./routes/dashboard");
 
-app.use("/api", apiRoutes);
-app.use("/api/auth", authRoutes);
+app.use("/api", apiLimiter, apiRoutes);
+app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/contact_lists", contactListsRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/messages", messageRoutes);
@@ -83,6 +102,20 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/webhook", webhookRoutes);
 
+
+// Privacy Policy Endpoint & Static Hosting
+const privacyPath = path.join(__dirname, "privacy");
+app.use("/privacy", express.static(privacyPath));
+app.get("/privacy", (req, res) => {
+  res.sendFile(path.join(privacyPath, "index.html"));
+});
+
+// Local Media & Uploads Static Hosting (Stored directly on server)
+const uploadsPath = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+app.use("/uploads", express.static(uploadsPath));
 
 app.get("/", (req, res) => {
   res.json({
@@ -97,6 +130,8 @@ app.get("/", (req, res) => {
       messages: "GET /api/messages/:contactId",
       campaigns: "GET /api/campaigns",
       webhook: "GET/POST /webhook",
+      privacy: "GET /privacy",
+      uploads: "GET /uploads/:folder/:filename",
     },
   });
 });
@@ -133,3 +168,12 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket server ready`);
   console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
 });
+
+process.on("uncaughtException", (err) => {
+  console.error("🔥 Uncaught Exception caught safely:", err.message || err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("🔥 Unhandled Rejection caught safely:", reason?.message || reason);
+});
+

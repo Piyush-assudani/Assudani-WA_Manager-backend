@@ -85,26 +85,35 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { name, phone_number } = req.body;
+    const { name, phone_number, city } = req.body;
     if (!phone_number) {
-      return res.status(400).json({ error: "Phone number is required" });
+      return res.status(400).json({ error: "Phone number is required." });
     }
-    const cleanedPhone = phone_number.replace(/\D/g, "");
+    let cleanedPhone = String(phone_number).replace(/\D/g, "");
+    if (cleanedPhone.startsWith("0") && cleanedPhone.length === 11) {
+      cleanedPhone = "91" + cleanedPhone.slice(1);
+    } else if (cleanedPhone.length === 10) {
+      cleanedPhone = "91" + cleanedPhone;
+    }
+
+    if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
+      return res.status(400).json({ error: "Please enter a valid 10-digit phone number." });
+    }
     
     const checkResult = await db.query("SELECT id FROM contacts WHERE phone_number = $1", [cleanedPhone]);
     if (checkResult.rows.length > 0) {
-      return res.status(400).json({ error: "Contact with this phone number already exists" });
+      return res.status(400).json({ error: "A contact with this phone number already exists." });
     }
 
     const result = await db.query(
-      "INSERT INTO contacts (name, phone_number) VALUES ($1, $2) RETURNING *",
-      [name || "Unknown", cleanedPhone]
+      "INSERT INTO contacts (name, phone_number, city) VALUES ($1, $2, $3) RETURNING *",
+      [(name || "").trim() || "Unknown", cleanedPhone, (city || "").trim()]
     );
 
     res.status(201).json({ message: "Contact added successfully", contact: result.rows[0] });
   } catch (err) {
     console.error("❌ Add contact error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to add contact. Please try again." });
   }
 });
 

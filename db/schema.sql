@@ -36,24 +36,20 @@ CREATE TABLE IF NOT EXISTS contacts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   phone_number VARCHAR(20) NOT NULL UNIQUE,
   name VARCHAR(255),
+  city VARCHAR(255),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
+CREATE INDEX IF NOT EXISTS idx_contacts_city ON contacts(city);
 
--- ============================================
--- Users Table (For Authentication)
--- ============================================
+-- Seed Default Users
+INSERT INTO users (username, password, role)
+VALUES 
+  ('admin', 'Qwerty@123&123%', 'admin'),
+  ('moxrathore', 'Qwerty@123&123%', 'admin')
+ON CONFLICT (username) DO NOTHING;
 
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  username VARCHAR(255) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Default admin user (password is 'admin' hashed with a simple placeholder for now, 
--- in real life we would bcrypt this. For this MVP, we will handle it in the backend auth route)
 
 -- ============================================
 -- Contact Lists (Saved Excel Sheets)

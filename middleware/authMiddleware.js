@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "fallback_super_secret_key_for_gau_shala";
+const JWT_SECRET = process.env.JWT_SECRET || "enterprise_wp_automation_jwt_secret_2026";
 
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;

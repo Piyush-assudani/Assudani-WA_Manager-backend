@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const db = require("../db");
-const { uploadFileToCloudinary } = require("../services/cloudinaryService");
+const { uploadFileToServer, deleteFileFromServer } = require("../services/localStorageService");
 const { uploadMediaToMeta } = require("../services/metaApi");
 const os = require("os");
 
@@ -13,10 +13,10 @@ const upload = multer({
       cb(null, `${Date.now()}-${file.originalname}`);
     },
   }),
-  limits: { fileSize: 16 * 1024 * 1024 }, 
+  limits: { fileSize: 32 * 1024 * 1024 }, // 32MB limit for server storage
 });
 
-
+// GET /api/media - list all media assets
 router.get("/", async (req, res) => {
   try {
     const result = await db.query(
@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-
+// POST /api/media - upload media directly to server storage
 router.post("/", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -39,19 +39,20 @@ router.post("/", upload.single("file"), async (req, res) => {
     let resourceType = "auto";
     if (req.file.mimetype.startsWith("image/")) resourceType = "image";
     if (req.file.mimetype.startsWith("video/")) resourceType = "video";
+    if (req.file.mimetype.startsWith("audio/")) resourceType = "audio";
 
-    
-    const mediaUrl = await uploadFileToCloudinary(req.file.path, "wp_automation/library", resourceType);
+    // Store file directly on local server filesystem
+    const mediaUrl = await uploadFileToServer(req.file.path, "library", resourceType);
 
-    
+    // Optional Meta media upload if credentials are provided
     let metaMediaId = null;
     try {
       metaMediaId = await uploadMediaToMeta(req.file.path, req.file.mimetype);
     } catch (metaErr) {
-      console.warn("⚠️ Meta upload failed, continuing with Cloudinary only:", metaErr.message);
+      console.warn("⚠️ Meta upload skipped/failed, saved to server storage:", metaErr.message);
     }
 
-    
+    // Save to database
     const result = await db.query(
       `INSERT INTO media_assets (original_name, media_url, meta_media_id, resource_type)
        VALUES ($1, $2, $3, $4) RETURNING *`,
@@ -65,12 +66,16 @@ router.post("/", upload.single("file"), async (req, res) => {
   }
 });
 
-
+// DELETE /api/media/:id - delete media from DB and server filesystem
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const existing = await db.query(`SELECT media_url FROM media_assets WHERE id = $1`, [id]);
+    if (existing.rows.length > 0) {
+      await deleteFileFromServer(existing.rows[0].media_url);
+    }
     await db.query(`DELETE FROM media_assets WHERE id = $1`, [id]);
-    res.json({ message: "Media deleted successfully" });
+    res.json({ message: "Media deleted successfully from server" });
   } catch (err) {
     console.error("❌ Media delete error:", err);
     res.status(500).json({ error: err.message });

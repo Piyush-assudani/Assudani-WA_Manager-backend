@@ -55,28 +55,86 @@ router.post("/", upload.single("file"), async (req, res) => {
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ error: "The uploaded file is empty." });
+    }
+
+    // Auto-detect header indices
+    let nameIdx = -1;
+    let phoneIdx = -1;
+    let cityIdx = -1;
+
+    const firstRow = rows[0] || [];
+    firstRow.forEach((cell, idx) => {
+      const val = String(cell || "").toLowerCase().trim();
+      if (/phone|mobile|whatsapp|contact_no|cell|mob/i.test(val) && phoneIdx === -1) {
+        phoneIdx = idx;
+      } else if (/name|customer|client|contact_name/i.test(val) && nameIdx === -1) {
+        nameIdx = idx;
+      } else if (/city|location|state|district|address/i.test(val) && cityIdx === -1) {
+        cityIdx = idx;
+      }
+    });
+
+    const startRow = (phoneIdx !== -1 || nameIdx !== -1) ? 1 : 0;
+
     const contactsToSave = [];
     
-    for (let i = 1; i < rows.length; i++) {
+    for (let i = startRow; i < rows.length; i++) {
       const row = rows[i];
-      if (row && row.length >= 3) {
-        let name = String(row[1] || "").trim(); // Column B: Name
-        let phone = String(row[2] || "").trim().replace(/[^0-9]/g, ""); // Column C: Mobile
-        let city = String(row[3] || "").trim(); // Column D: City
-        
-        // Prepend 91 to 10 digit Indian numbers
-        if (phone.length === 10) {
-          phone = "91" + phone;
-        }
+      if (!row || !Array.isArray(row) || row.length === 0) continue;
 
-        if (phone.length >= 10) {
-          contactsToSave.push({ name, phone, city });
+      let extractedPhone = "";
+      let extractedName = "";
+      let extractedCity = "";
+
+      if (phoneIdx !== -1 && row[phoneIdx] !== undefined) {
+        extractedPhone = String(row[phoneIdx] || "").trim();
+      }
+      if (nameIdx !== -1 && row[nameIdx] !== undefined) {
+        extractedName = String(row[nameIdx] || "").trim();
+      }
+      if (cityIdx !== -1 && row[cityIdx] !== undefined) {
+        extractedCity = String(row[cityIdx] || "").trim();
+      }
+
+      // If phone wasn't detected by header, scan cells for a 10-15 digit string
+      if (!extractedPhone) {
+        for (let col = 0; col < row.length; col++) {
+          const raw = String(row[col] || "").trim();
+          const digits = raw.replace(/\D/g, "");
+          if (digits.length >= 10 && digits.length <= 15) {
+            extractedPhone = digits;
+            // The column before or after could be the name
+            if (!extractedName && col > 0 && typeof row[col - 1] === "string") {
+              extractedName = String(row[col - 1]).trim();
+            } else if (!extractedName && col + 1 < row.length && typeof row[col + 1] === "string") {
+              extractedName = String(row[col + 1]).trim();
+            }
+            break;
+          }
         }
+      }
+
+      // Clean & normalize phone number
+      let cleanPhone = extractedPhone.replace(/[^0-9]/g, "");
+      if (cleanPhone.startsWith("0") && cleanPhone.length === 11) {
+        cleanPhone = "91" + cleanPhone.slice(1);
+      } else if (cleanPhone.length === 10) {
+        cleanPhone = "91" + cleanPhone;
+      }
+
+      if (cleanPhone.length >= 10 && cleanPhone.length <= 15) {
+        contactsToSave.push({
+          name: extractedName || `Contact ${cleanPhone.slice(-4)}`,
+          phone: cleanPhone,
+          city: extractedCity || "",
+        });
       }
     }
 
     if (contactsToSave.length === 0) {
-      return res.status(400).json({ error: "No valid phone numbers found. Please ensure S.No, Name, Mobile Number, City format." });
+      return res.status(400).json({ error: "No valid 10-digit phone numbers could be found in the uploaded file." });
     }
 
     
