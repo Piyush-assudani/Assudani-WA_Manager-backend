@@ -14,10 +14,11 @@ if (!fs.existsSync(UPLOADS_ROOT)) {
  */
 function getBaseUrl() {
   const envUrl = process.env.BASE_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
-  if (envUrl && envUrl.trim() !== "") {
+  if (envUrl && envUrl.trim() !== "" && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
     return envUrl.trim().replace(/\/+$/, "");
   }
-  if (process.env.NODE_ENV === "production") {
+  // If deployed or configured with WhatsApp API, use the live public domain
+  if (process.env.NODE_ENV === "production" || process.env.WHATSAPP_PHONE_NUMBER_ID) {
     return "https://morihix-wp.piyushassudani.in";
   }
   const port = process.env.PORT || 5001;
@@ -44,17 +45,8 @@ async function uploadFileToServer(tempFilePath, folder = "library", resourceType
   const filename = `${uniqueId}${ext}`;
   const destination = path.join(targetDir, filename);
 
-  // Copy or move the file to server uploads
+  // Copy file to server uploads directory
   await fs.promises.copyFile(tempFilePath, destination);
-
-  // Cleanup temporary file if it was created in tmp
-  try {
-    if (tempFilePath.includes("tmp") || tempFilePath.includes("Temp")) {
-      await fs.promises.unlink(tempFilePath).catch(() => {});
-    }
-  } catch (err) {
-    // ignore cleanup errors
-  }
 
   const publicUrl = `${getBaseUrl()}/uploads/${cleanFolder}/${filename}`;
   return publicUrl;

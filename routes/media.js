@@ -1,3 +1,4 @@
+const fs = require("fs");
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
@@ -26,7 +27,11 @@ router.get("/", async (req, res) => {
     const result = await db.query(
       `SELECT * FROM media_assets ORDER BY created_at DESC`
     );
-    res.json(result.rows);
+    const rows = result.rows.map(row => ({
+      ...row,
+      media_url: row.media_url?.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in") || row.media_url,
+    }));
+    res.json(rows);
   } catch (err) {
     console.error("❌ List media error:", err);
     res.status(500).json({ error: err.message });
@@ -45,10 +50,7 @@ router.post("/", upload.single("file"), async (req, res) => {
     if (req.file.mimetype.startsWith("video/")) resourceType = "video";
     if (req.file.mimetype.startsWith("audio/")) resourceType = "audio";
 
-    // Store file directly on local server filesystem
-    const mediaUrl = await uploadFileToServer(req.file.path, "library", resourceType);
-
-    // Optional Meta media upload if credentials are provided
+    // 1. Upload to Meta Cloud API (stream directly from temp file)
     let metaMediaId = null;
     try {
       metaMediaId = await uploadMediaToMeta(req.file.path, req.file.mimetype);
@@ -56,7 +58,13 @@ router.post("/", upload.single("file"), async (req, res) => {
       console.warn("⚠️ Meta upload skipped/failed, saved to server storage:", metaErr.message);
     }
 
-    // Save to database
+    // 2. Store file directly on local server filesystem
+    const mediaUrl = await uploadFileToServer(req.file.path, "library", resourceType);
+
+    // 3. Clean up temp multer file
+    fs.promises.unlink(req.file.path).catch(() => {});
+
+    // 4. Save to database
     const result = await db.query(
       `INSERT INTO media_assets (original_name, media_url, meta_media_id, resource_type)
        VALUES ($1, $2, $3, $4) RETURNING *`,

@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
+const fs = require("fs");
 const db = require("../db");
-const { sendTextMessage, sendTemplateMessage, sendMediaMessage } = require("../services/metaApi");
+const { sendTextMessage, sendTemplateMessage, sendMediaMessage, sendMediaById, uploadMediaToMeta } = require("../services/metaApi");
 const { uploadFileToCloudinary } = require("../services/cloudinaryService");
 const multer = require("multer");
 const os = require("os");
@@ -83,9 +84,14 @@ router.get("/:contactId", async (req, res) => {
       ? Date.now() - new Date(lastInboundAt).getTime() < 24 * 60 * 60 * 1000
       : false;
 
+    const normalizedMessages = messagesResult.rows.map(m => ({
+      ...m,
+      media_url: m.media_url?.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in") || m.media_url,
+    }));
+
     res.json({
       contact: contactResult.rows[0],
-      messages: messagesResult.rows,
+      messages: normalizedMessages,
       window: {
         open: windowOpen,
         last_inbound_at: lastInboundAt,
@@ -355,11 +361,27 @@ router.post("/:contactId/media", upload.single("file"), async (req, res) => {
       displayBody = "[Document]";
     }
 
-    // Upload to local server / storage
+    // 1. Upload to Meta first directly using temp stream
+    let metaMediaId = null;
+    try {
+      metaMediaId = await uploadMediaToMeta(req.file.path, req.file.mimetype);
+    } catch (metaErr) {
+      console.warn("⚠️ Meta pre-upload failed, will fallback to URL:", metaErr.message);
+    }
+
+    // 2. Upload to local server / storage
     const mediaUrl = await uploadFileToCloudinary(req.file.path, "wp_automation/direct", resourceType);
 
-    // Send via Meta API using the URL
-    const result = await sendMediaMessage(contact.phone_number, mediaUrl, metaType);
+    // 3. Clean up temp multer file
+    fs.promises.unlink(req.file.path).catch(() => {});
+
+    // 4. Send via Meta API (prefer Meta Media ID for reliability, fallback to public mediaUrl)
+    let result;
+    if (metaMediaId) {
+      result = await sendMediaById(contact.phone_number, metaMediaId, metaType);
+    } else {
+      result = await sendMediaMessage(contact.phone_number, mediaUrl, metaType);
+    }
 
     if (!result.success) {
       return res.status(502).json({ error: "Failed to send media via Meta API", details: result.error });

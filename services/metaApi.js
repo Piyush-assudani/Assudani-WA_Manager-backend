@@ -154,6 +154,47 @@ const sendMediaMessage = async (to, mediaUrl, type = "image") => {
   }
 };
 
+const sendMediaById = async (to, mediaId, type = "image") => {
+  const { apiBase, phoneId, token } = getMetaConfig();
+
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta WhatsApp Cloud API credentials not configured in backend .env.",
+    };
+  }
+
+  try {
+    const sanitizedTo = to ? String(to).replace(/\D/g, "") : "";
+    const payload = {
+      messaging_product: "whatsapp",
+      to: sanitizedTo,
+      type,
+      [type]: { id: mediaId },
+    };
+
+    const response = await axios.post(`${apiBase}/${phoneId}/messages`, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    });
+
+    return {
+      success: true,
+      messageId: response.data.messages?.[0]?.id || null,
+      data: response.data,
+    };
+  } catch (err) {
+    console.error("❌ Meta API sendMediaById error:", err.response?.data || err.message);
+    return {
+      success: false,
+      error: err.response?.data?.error?.message || err.message,
+    };
+  }
+};
+
 const uploadMediaToMeta = async (filePath, mimeType) => {
   const { apiBase, phoneId, token } = getMetaConfig();
 
@@ -374,5 +415,6 @@ module.exports = {
   getTemplates,
   createTemplate,
   sendMediaMessage,
+  sendMediaById,
   getAccountHealth,
 };
