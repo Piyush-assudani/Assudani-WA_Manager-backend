@@ -11,7 +11,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "enterprise_wp_automation_jwt_secre
  * Robust, case-insensitive, bcrypt-verified authentication
  */
 router.post("/login", async (req, res) => {
-  let { username, password } = req.body;
+  let { username, password } = req.body || {};
 
   if (!username || !password || typeof username !== "string" || typeof password !== "string") {
     return res.status(400).json({ error: "Username and password are required." });
@@ -76,7 +76,7 @@ router.post("/login", async (req, res) => {
  * Update credentials with bcrypt hashing
  */
 router.put("/profile", async (req, res) => {
-  const { currentUsername, currentPassword, newUsername, newPassword } = req.body;
+  const { currentUsername, currentPassword, newUsername, newPassword } = req.body || {};
 
   if (!currentUsername || !currentPassword || !newUsername || !newPassword) {
     return res.status(400).json({ error: "All profile fields are required." });

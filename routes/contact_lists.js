@@ -5,12 +5,30 @@ const XLSX = require("xlsx");
 const db = require("../db");
 const { uploadExcelToSupabase } = require("../services/supabaseService");
 
+const isValidUuid = (val) =>
+  typeof val === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
+const cleanPhoneNumber = (raw) => {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.startsWith("0") && digits.length === 11) {
+    digits = "91" + digits.slice(1);
+  } else if (digits.length === 10) {
+    digits = "91" + digits;
+  }
+  return digits;
+};
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, 
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
 });
 
-
+/**
+ * GET /api/contact_lists
+ * List all saved contact sheets with member counts
+ */
 router.get("/", async (req, res) => {
   try {
     const result = await db.query(
@@ -23,43 +41,57 @@ router.get("/", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ List contact_lists error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to load contact lists." });
   }
 });
 
-
+/**
+ * POST /api/contact_lists
+ * Upload and parse Excel / CSV contact sheet
+ */
 router.post("/", upload.single("file"), async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name } = req.body || {};
 
-    if (!name) {
-      return res.status(400).json({ error: "List name is required" });
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: "List name is required." });
     }
 
-    if (!req.file) {
-      return res.status(400).json({ error: "Excel/CSV file is required" });
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: "Please select an Excel (.xlsx, .xls) or CSV file." });
     }
 
-    
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    let workbook;
+    try {
+      workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    } catch (parseErr) {
+      return res.status(400).json({ error: "Unable to parse Excel file. The file may be corrupt or encrypted." });
+    }
+
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      return res.status(400).json({ error: "The uploaded spreadsheet does not contain any sheets." });
+    }
+
     const sheetName = workbook.SheetNames[0];
-    
-    
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      return res.status(400).json({ error: "Spreadsheet sheet is empty or unreadable." });
+    }
+
     let fileUrl = null;
     try {
-      const filename = `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
-      fileUrl = await uploadExcelToSupabase(req.file.buffer, filename);
+      const safeFilename = `${Date.now()}-${(req.file.originalname || "contacts.xlsx").replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+      fileUrl = await uploadExcelToSupabase(req.file.buffer, safeFilename);
     } catch (uploadErr) {
-      console.error("Failed to upload Excel to Supabase, continuing without URL:", uploadErr);
+      console.warn("Supabase storage upload skipped/failed:", uploadErr.message);
     }
-    const sheet = workbook.Sheets[sheetName];
+
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
     if (!rows || rows.length === 0) {
-      return res.status(400).json({ error: "The uploaded file is empty." });
+      return res.status(400).json({ error: "The uploaded file contains no data rows." });
     }
 
-    // Auto-detect header indices
+    // Auto-detect header column indices
     let nameIdx = -1;
     let phoneIdx = -1;
     let cityIdx = -1;
@@ -67,19 +99,18 @@ router.post("/", upload.single("file"), async (req, res) => {
     const firstRow = rows[0] || [];
     firstRow.forEach((cell, idx) => {
       const val = String(cell || "").toLowerCase().trim();
-      if (/phone|mobile|whatsapp|contact_no|cell|mob/i.test(val) && phoneIdx === -1) {
+      if (/phone|mobile|whatsapp|contact_no|cell|mob|tel/i.test(val) && phoneIdx === -1) {
         phoneIdx = idx;
-      } else if (/name|customer|client|contact_name/i.test(val) && nameIdx === -1) {
+      } else if (/name|customer|client|contact_name|person/i.test(val) && nameIdx === -1) {
         nameIdx = idx;
       } else if (/city|location|state|district|address/i.test(val) && cityIdx === -1) {
         cityIdx = idx;
       }
     });
 
-    const startRow = (phoneIdx !== -1 || nameIdx !== -1) ? 1 : 0;
-
+    const startRow = phoneIdx !== -1 || nameIdx !== -1 ? 1 : 0;
     const contactsToSave = [];
-    
+
     for (let i = startRow; i < rows.length; i++) {
       const row = rows[i];
       if (!row || !Array.isArray(row) || row.length === 0) continue;
@@ -105,7 +136,6 @@ router.post("/", upload.single("file"), async (req, res) => {
           const digits = raw.replace(/\D/g, "");
           if (digits.length >= 10 && digits.length <= 15) {
             extractedPhone = digits;
-            // The column before or after could be the name
             if (!extractedName && col > 0 && typeof row[col - 1] === "string") {
               extractedName = String(row[col - 1]).trim();
             } else if (!extractedName && col + 1 < row.length && typeof row[col + 1] === "string") {
@@ -116,28 +146,23 @@ router.post("/", upload.single("file"), async (req, res) => {
         }
       }
 
-      // Clean & normalize phone number
-      let cleanPhone = extractedPhone.replace(/[^0-9]/g, "");
-      if (cleanPhone.startsWith("0") && cleanPhone.length === 11) {
-        cleanPhone = "91" + cleanPhone.slice(1);
-      } else if (cleanPhone.length === 10) {
-        cleanPhone = "91" + cleanPhone;
-      }
-
+      const cleanPhone = cleanPhoneNumber(extractedPhone);
       if (cleanPhone.length >= 10 && cleanPhone.length <= 15) {
         contactsToSave.push({
-          name: extractedName || `Contact ${cleanPhone.slice(-4)}`,
+          name: (extractedName || `Contact ${cleanPhone.slice(-4)}`).slice(0, 255),
           phone: cleanPhone,
-          city: extractedCity || "",
+          city: (extractedCity || "").slice(0, 255),
         });
       }
     }
 
     if (contactsToSave.length === 0) {
-      return res.status(400).json({ error: "No valid 10-digit phone numbers could be found in the uploaded file." });
+      return res.status(400).json({
+        error: "No valid 10 to 15-digit phone numbers could be extracted from the uploaded file.",
+      });
     }
 
-    
+    // Deduplicate within the file
     const uniqueMap = new Map();
     for (const c of contactsToSave) {
       if (!uniqueMap.has(c.phone)) {
@@ -146,36 +171,33 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
     const uniqueContacts = Array.from(uniqueMap.values());
 
-    
     const listResult = await db.query(
       `INSERT INTO contact_lists (name, file_url) VALUES ($1, $2) RETURNING *`,
-      [name, fileUrl]
+      [name.trim().slice(0, 255), fileUrl]
     );
     const list = listResult.rows[0];
 
-    
     let addedCount = 0;
     for (const contact of uniqueContacts) {
-      const contactResult = await db.query(
-        `INSERT INTO contacts (phone_number, name, city)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (phone_number) DO UPDATE SET 
-           name = COALESCE(NULLIF(EXCLUDED.name, ''), contacts.name),
-           city = COALESCE(NULLIF(EXCLUDED.city, ''), contacts.city)
-         RETURNING id`,
-        [contact.phone, contact.name, contact.city]
-      );
-      
-      const contactId = contactResult.rows[0].id;
-      
       try {
+        const contactResult = await db.query(
+          `INSERT INTO contacts (phone_number, name, city)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (phone_number) DO UPDATE SET 
+             name = COALESCE(NULLIF(EXCLUDED.name, ''), contacts.name),
+             city = COALESCE(NULLIF(EXCLUDED.city, ''), contacts.city)
+           RETURNING id`,
+          [contact.phone, contact.name, contact.city]
+        );
+
+        const contactId = contactResult.rows[0].id;
         await db.query(
           `INSERT INTO contact_list_members (list_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
           [list.id, contactId]
         );
         addedCount++;
-      } catch (e) {
-        
+      } catch (insertErr) {
+        console.warn("Failed to insert contact member:", insertErr.message);
       }
     }
 
@@ -190,23 +212,26 @@ router.post("/", upload.single("file"), async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Contact list creation error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to process contact list upload." });
   }
 });
 
-
+/**
+ * POST /api/contact_lists/manual
+ * Create an empty list for manual contact entry
+ */
 router.post("/manual", express.json(), async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
+    const { name } = req.body || {};
+    if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "List name is required" });
     }
-    
+
     const listResult = await db.query(
       `INSERT INTO contact_lists (name) VALUES ($1) RETURNING *`,
-      [name]
+      [name.trim().slice(0, 255)]
     );
-    
+
     res.status(201).json({
       message: "Empty contact list created successfully",
       list: {
@@ -218,13 +243,22 @@ router.post("/manual", express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Manual list creation error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to create empty list." });
   }
 });
 
+/**
+ * GET /api/contact_lists/:id/contacts
+ * Retrieve all contacts assigned to a specific list
+ */
 router.get("/:id/contacts", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid contact list ID format." });
+    }
+
     const result = await db.query(
       `SELECT c.id, c.phone_number, c.name, c.city, c.created_at,
         (SELECT EXISTS (
@@ -242,23 +276,36 @@ router.get("/:id/contacts", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ List contacts error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch list contacts." });
   }
 });
 
+/**
+ * POST /api/contact_lists/:id/contacts
+ * Manually add a single contact to a list
+ */
 router.post("/:id/contacts", async (req, res) => {
   try {
     const { id: list_id } = req.params;
-    const { name, phone_number, city } = req.body;
-    
+
+    if (!isValidUuid(list_id)) {
+      return res.status(400).json({ error: "Invalid contact list ID format." });
+    }
+
+    const { name, phone_number, city } = req.body || {};
+
     if (!phone_number) {
       return res.status(400).json({ error: "Phone number is required" });
     }
-    let cleanedPhone = phone_number.replace(/\D/g, "");
-    if (cleanedPhone.length === 10) {
-      cleanedPhone = "91" + cleanedPhone;
+
+    const cleanedPhone = cleanPhoneNumber(phone_number);
+    if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
+      return res.status(400).json({ error: "Please enter a valid 10 to 15-digit phone number." });
     }
-    
+
+    const safeName = (typeof name === "string" ? name.trim().slice(0, 255) : "") || "Unknown";
+    const safeCity = typeof city === "string" ? city.trim().slice(0, 255) : "";
+
     const contactResult = await db.query(
       `INSERT INTO contacts (phone_number, name, city)
        VALUES ($1, $2, $3)
@@ -266,10 +313,10 @@ router.post("/:id/contacts", async (req, res) => {
          name = COALESCE(NULLIF(EXCLUDED.name, ''), contacts.name),
          city = COALESCE(NULLIF(EXCLUDED.city, ''), contacts.city)
        RETURNING id`,
-      [cleanedPhone, name || "Unknown", city || ""]
+      [cleanedPhone, safeName, safeCity]
     );
     const contactId = contactResult.rows[0].id;
-    
+
     await db.query(
       `INSERT INTO contact_list_members (list_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
       [list_id, contactId]
@@ -278,24 +325,34 @@ router.post("/:id/contacts", async (req, res) => {
     res.status(201).json({ message: "Contact added to list successfully" });
   } catch (err) {
     console.error("❌ Add contact to list error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to add contact to list." });
   }
 });
 
+/**
+ * DELETE /api/contact_lists/:id
+ * Delete contact list and dissociate members
+ */
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // First remove all members of this list
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid contact list ID format." });
+    }
+
+    // Remove members from list association first
     await db.query(`DELETE FROM contact_list_members WHERE list_id = $1`, [id]);
-    
-    // Then delete the list itself
-    await db.query(`DELETE FROM contact_lists WHERE id = $1`, [id]);
-    
+    const result = await db.query(`DELETE FROM contact_lists WHERE id = $1 RETURNING id`, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Contact list not found." });
+    }
+
     res.json({ message: "Contact list deleted successfully" });
   } catch (err) {
     console.error("❌ Delete contact list error:", err);
-    res.status(500).json({ error: "Failed to delete list. It might be in use." });
+    res.status(500).json({ error: "Failed to delete list." });
   }
 });
 

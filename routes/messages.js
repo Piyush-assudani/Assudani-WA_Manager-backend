@@ -6,6 +6,10 @@ const { uploadFileToCloudinary } = require("../services/cloudinaryService");
 const multer = require("multer");
 const os = require("os");
 
+const isValidUuid = (val) =>
+  typeof val === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: os.tmpdir(),
@@ -13,12 +17,13 @@ const upload = multer({
       cb(null, `${Date.now()}-${file.originalname}`);
     },
   }),
-  limits: { fileSize: 16 * 1024 * 1024 }, 
+  limits: { fileSize: 16 * 1024 * 1024 }, // 16MB file limit
 });
 
-
-
-
+/**
+ * GET /api/messages/inbound
+ * Fetch recent inbound messages across all contacts
+ */
 router.get("/inbound", async (req, res) => {
   try {
     const result = await db.query(
@@ -32,34 +37,39 @@ router.get("/inbound", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ Get inbound messages error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to retrieve inbound messages." });
   }
 });
 
-
-
-
+/**
+ * GET /api/messages/:contactId
+ * Fetch paginated messages for a specific contact
+ */
 router.get("/:contactId", async (req, res) => {
   try {
     const { contactId } = req.params;
     const { limit = 100, offset = 0 } = req.query;
 
-    
+    if (!isValidUuid(contactId)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
     const contactResult = await db.query(`SELECT * FROM contacts WHERE id = $1`, [contactId]);
     if (contactResult.rows.length === 0) {
       return res.status(404).json({ error: "Contact not found" });
     }
 
-    
+    const safeLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+    const safeOffset = Math.max(parseInt(offset) || 0, 0);
+
     const messagesResult = await db.query(
       `SELECT * FROM messages
        WHERE contact_id = $1
        ORDER BY timestamp ASC NULLS FIRST, id ASC
        LIMIT $2 OFFSET $3`,
-      [contactId, parseInt(limit), parseInt(offset)]
+      [contactId, safeLimit, safeOffset]
     );
 
-    
     const lastInbound = await db.query(
       `SELECT timestamp FROM messages
        WHERE contact_id = $1 AND direction = 'inbound' AND timestamp IS NOT NULL
@@ -70,7 +80,7 @@ router.get("/:contactId", async (req, res) => {
 
     const lastInboundAt = lastInbound.rows[0]?.timestamp || null;
     const windowOpen = lastInboundAt
-      ? new Date() - new Date(lastInboundAt) < 24 * 60 * 60 * 1000
+      ? Date.now() - new Date(lastInboundAt).getTime() < 24 * 60 * 60 * 1000
       : false;
 
     res.json({
@@ -86,16 +96,22 @@ router.get("/:contactId", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Get messages error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch conversation messages." });
   }
 });
 
-// Mark messages as read for a contact
+/**
+ * PUT /api/messages/:contactId/read
+ * Mark messages as read for a contact
+ */
 router.put("/:contactId/read", async (req, res) => {
   try {
     const { contactId } = req.params;
-    
-    // Update all inbound messages for this contact to 'read'
+
+    if (!isValidUuid(contactId)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
     const result = await db.query(
       `UPDATE messages 
        SET status = 'read' 
@@ -103,35 +119,44 @@ router.put("/:contactId/read", async (req, res) => {
        RETURNING id`,
       [contactId]
     );
-    
+
     res.json({ success: true, updated_count: result.rowCount });
   } catch (err) {
     console.error("❌ Mark as read error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to mark messages as read." });
   }
 });
 
-
-
-
-
+/**
+ * POST /api/messages/:contactId
+ * Send text message within the 24h window
+ */
 router.post("/:contactId", async (req, res) => {
   try {
     const { contactId } = req.params;
-    const { message } = req.body;
 
-    if (!message || !message.trim()) {
-      return res.status(400).json({ error: "Message text is required" });
+    if (!isValidUuid(contactId)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
     }
 
-    
+    let { message } = req.body || {};
+
+    if (!message || typeof message !== "string" || !message.trim()) {
+      return res.status(400).json({ error: "Message text cannot be empty." });
+    }
+
+    message = message.trim();
+    if (message.length > 4096) {
+      return res.status(400).json({ error: "Message exceeds WhatsApp 4096 character limit." });
+    }
+
     const contactResult = await db.query(`SELECT * FROM contacts WHERE id = $1`, [contactId]);
     if (contactResult.rows.length === 0) {
       return res.status(404).json({ error: "Contact not found" });
     }
     const contact = contactResult.rows[0];
 
-    
+    // Check 24-hour service window
     const lastInbound = await db.query(
       `SELECT timestamp FROM messages
        WHERE contact_id = $1 AND direction = 'inbound' AND timestamp IS NOT NULL
@@ -142,25 +167,24 @@ router.post("/:contactId", async (req, res) => {
 
     if (!lastInbound.rows[0]) {
       return res.status(403).json({
-        error: "No inbound messages from this contact. Send a template to start the conversation.",
+        error: "No inbound messages from this contact. Send an approved template to start the conversation.",
         window_closed: true,
       });
     }
 
     const lastInboundTime = new Date(lastInbound.rows[0].timestamp);
-    const hoursSinceLastInbound = (new Date() - lastInboundTime) / (1000 * 60 * 60);
+    const hoursSinceLastInbound = (Date.now() - lastInboundTime.getTime()) / (1000 * 60 * 60);
 
     if (hoursSinceLastInbound >= 24) {
       return res.status(403).json({
-        error: "24-hour window closed. Send a template to restart chat.",
+        error: "24-hour window closed. Send a template message to restart the conversation.",
         window_closed: true,
         last_inbound_at: lastInbound.rows[0].timestamp,
         hours_ago: Math.round(hoursSinceLastInbound),
       });
     }
 
-    
-    const result = await sendTextMessage(contact.phone_number, message.trim());
+    const result = await sendTextMessage(contact.phone_number, message);
 
     if (!result.success) {
       return res.status(502).json({
@@ -169,17 +193,15 @@ router.post("/:contactId", async (req, res) => {
       });
     }
 
-    
     const msgResult = await db.query(
       `INSERT INTO messages (contact_id, direction, message_body, meta_message_id, status, timestamp)
        VALUES ($1, 'outbound', $2, $3, 'sent', NOW())
        RETURNING *`,
-      [contactId, message.trim(), result.messageId]
+      [contactId, message, result.messageId]
     );
 
     const savedMessage = msgResult.rows[0];
 
-    
     const io = req.app.get("io");
     if (io) {
       io.emit("new_message", {
@@ -188,7 +210,7 @@ router.post("/:contactId", async (req, res) => {
         contact_phone: contact.phone_number,
         contact_name: contact.name,
         direction: "outbound",
-        message_body: message.trim(),
+        message_body: message,
         meta_message_id: result.messageId,
         status: "sent",
         timestamp: savedMessage.timestamp,
@@ -198,35 +220,39 @@ router.post("/:contactId", async (req, res) => {
     res.status(201).json(savedMessage);
   } catch (err) {
     console.error("❌ Send message error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to send message." });
   }
 });
 
-
-
-
+/**
+ * POST /api/messages/:contactId/template
+ * Send approved Meta template to contact (works outside 24h window)
+ */
 router.post("/:contactId/template", async (req, res) => {
   try {
     const { contactId } = req.params;
-    const { template_name, language_code = "en_US", components = [] } = req.body;
 
-    if (!template_name) {
+    if (!isValidUuid(contactId)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
+    const { template_name, language_code = "en_US", components = [] } = req.body || {};
+
+    if (!template_name || typeof template_name !== "string" || !template_name.trim()) {
       return res.status(400).json({ error: "template_name is required" });
     }
 
-    
     const contactResult = await db.query(`SELECT * FROM contacts WHERE id = $1`, [contactId]);
     if (contactResult.rows.length === 0) {
       return res.status(404).json({ error: "Contact not found" });
     }
     const contact = contactResult.rows[0];
 
-    
     const result = await sendTemplateMessage(
       contact.phone_number,
-      template_name,
+      template_name.trim(),
       language_code,
-      components
+      Array.isArray(components) ? components : []
     );
 
     if (!result.success) {
@@ -236,17 +262,15 @@ router.post("/:contactId/template", async (req, res) => {
       });
     }
 
-    
     const msgResult = await db.query(
       `INSERT INTO messages (contact_id, direction, message_body, meta_message_id, status, timestamp)
        VALUES ($1, 'outbound', $2, $3, 'sent', NOW())
        RETURNING *`,
-      [contactId, `[Template: ${template_name}]`, result.messageId]
+      [contactId, `[Template: ${template_name.trim()}]`, result.messageId]
     );
 
     const savedMessage = msgResult.rows[0];
 
-    
     const io = req.app.get("io");
     if (io) {
       io.emit("new_message", {
@@ -255,7 +279,7 @@ router.post("/:contactId/template", async (req, res) => {
         contact_phone: contact.phone_number,
         contact_name: contact.name,
         direction: "outbound",
-        message_body: `[Template: ${template_name}]`,
+        message_body: `[Template: ${template_name.trim()}]`,
         meta_message_id: result.messageId,
         status: "sent",
         timestamp: savedMessage.timestamp,
@@ -265,39 +289,22 @@ router.post("/:contactId/template", async (req, res) => {
     res.status(201).json(savedMessage);
   } catch (err) {
     console.error("❌ Send template error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to dispatch template message." });
   }
 });
 
-router.delete("/:messageId", async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const result = await db.query(
-      "DELETE FROM messages WHERE id = $1 RETURNING id",
-      [messageId]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Message not found" });
-    }
-    
-    const io = req.app.get("io");
-    if (io) {
-      io.emit("message_deleted", { id: result.rows[0].id });
-    }
-    
-    res.json({ success: true, id: result.rows[0].id });
-  } catch (err) {
-    console.error("❌ Delete message error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-module.exports = router;
-
+/**
+ * POST /api/messages/:contactId/media
+ * Send outbound media file to contact
+ */
 router.post("/:contactId/media", upload.single("file"), async (req, res) => {
   try {
     const { contactId } = req.params;
-    
+
+    if (!isValidUuid(contactId)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
     if (!req.file) {
       return res.status(400).json({ error: "No file provided" });
     }
@@ -320,7 +327,7 @@ router.post("/:contactId/media", upload.single("file"), async (req, res) => {
       return res.status(403).json({ error: "No inbound messages from this contact.", window_closed: true });
     }
 
-    const hoursSinceLastInbound = (new Date() - new Date(lastInbound.rows[0].timestamp)) / (1000 * 60 * 60);
+    const hoursSinceLastInbound = (Date.now() - new Date(lastInbound.rows[0].timestamp).getTime()) / (1000 * 60 * 60);
     if (hoursSinceLastInbound >= 24) {
       return res.status(403).json({ error: "24-hour window closed.", window_closed: true });
     }
@@ -329,26 +336,26 @@ router.post("/:contactId/media", upload.single("file"), async (req, res) => {
     let resourceType = "auto";
     let metaType = "image";
     let displayBody = "[Image]";
-    
-    if (req.file.mimetype.startsWith("image/")) { 
-      resourceType = "image"; 
-      metaType = "image"; 
+
+    if (req.file.mimetype.startsWith("image/")) {
+      resourceType = "image";
+      metaType = "image";
       displayBody = "[Image]";
-    } else if (req.file.mimetype.startsWith("video/")) { 
-      resourceType = "video"; 
-      metaType = "video"; 
+    } else if (req.file.mimetype.startsWith("video/")) {
+      resourceType = "video";
+      metaType = "video";
       displayBody = "[Video]";
-    } else if (req.file.mimetype.startsWith("audio/")) { 
-      resourceType = "video"; 
-      metaType = "audio"; 
+    } else if (req.file.mimetype.startsWith("audio/")) {
+      resourceType = "video";
+      metaType = "audio";
       displayBody = "[Audio]";
-    } else { 
-      resourceType = "raw"; 
-      metaType = "document"; 
+    } else {
+      resourceType = "raw";
+      metaType = "document";
       displayBody = "[Document]";
     }
 
-    // Upload to Cloudinary
+    // Upload to local server / storage
     const mediaUrl = await uploadFileToCloudinary(req.file.path, "wp_automation/direct", resourceType);
 
     // Send via Meta API using the URL
@@ -367,12 +374,12 @@ router.post("/:contactId/media", upload.single("file"), async (req, res) => {
 
     const savedMessage = msgResult.rows[0];
 
-    // Emit via Socket
+    // Emit via Socket with correct UUID string contactId
     const io = req.app.get("io");
     if (io) {
       io.emit("new_message", {
         id: savedMessage.id,
-        contact_id: parseInt(contactId),
+        contact_id: contactId,
         contact_phone: contact.phone_number,
         contact_name: contact.name,
         direction: "outbound",
@@ -387,6 +394,37 @@ router.post("/:contactId/media", upload.single("file"), async (req, res) => {
     res.status(201).json(savedMessage);
   } catch (err) {
     console.error("❌ Send media error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to process and send media file." });
   }
 });
+
+/**
+ * DELETE /api/messages/:messageId
+ * Delete a message
+ */
+router.delete("/:messageId", async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    if (!isValidUuid(messageId)) {
+      return res.status(400).json({ error: "Invalid message ID format." });
+    }
+
+    const result = await db.query("DELETE FROM messages WHERE id = $1 RETURNING id", [messageId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("message_deleted", { id: result.rows[0].id });
+    }
+
+    res.json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error("❌ Delete message error:", err);
+    res.status(500).json({ error: "Failed to delete message." });
+  }
+});
+
+module.exports = router;

@@ -6,6 +6,10 @@ const { uploadFileToServer, deleteFileFromServer } = require("../services/localS
 const { uploadMediaToMeta } = require("../services/metaApi");
 const os = require("os");
 
+const isValidUuid = (val) =>
+  typeof val === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: os.tmpdir(),
@@ -70,15 +74,22 @@ router.post("/", upload.single("file"), async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await db.query(`SELECT media_url FROM media_assets WHERE id = $1`, [id]);
-    if (existing.rows.length > 0) {
-      await deleteFileFromServer(existing.rows[0].media_url);
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid media ID format." });
     }
+
+    const existing = await db.query(`SELECT media_url FROM media_assets WHERE id = $1`, [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Media asset not found." });
+    }
+
+    await deleteFileFromServer(existing.rows[0].media_url);
     await db.query(`DELETE FROM media_assets WHERE id = $1`, [id]);
     res.json({ message: "Media deleted successfully from server" });
   } catch (err) {
     console.error("❌ Media delete error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to delete media asset." });
   }
 });
 

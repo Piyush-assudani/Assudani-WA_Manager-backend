@@ -1,68 +1,64 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const XLSX = require("xlsx");
-const { v4: uuidv4 } = require("uuid");
 const db = require("../db");
 const { processCampaign } = require("../services/campaignProcessor");
 const { uploadFileToCloudinary } = require("../services/cloudinaryService");
-
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, 
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "text/csv",
-    ];
-    if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(xlsx|xls|csv)$/i)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only Excel (.xlsx, .xls) and CSV files are allowed"));
-    }
-  },
-});
-
 const os = require("os");
 const path = require("path");
 const { uploadMediaToMeta, getTemplates } = require("../services/metaApi");
+
+const isValidUuid = (val) =>
+  typeof val === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 const uploadMedia = multer({
   storage: multer.diskStorage({
     destination: os.tmpdir(),
     filename: (req, file, cb) => {
       cb(null, `${Date.now()}-${file.originalname}`);
-    }
+    },
   }),
-  limits: { fileSize: 16 * 1024 * 1024 }, 
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit
 });
 
-
-
-
+/**
+ * POST /api/campaigns
+ * Launch broadcast campaign across one or multiple contact lists
+ */
 router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
   try {
-    const { name, template_name, language_code, contact_list_ids } = req.body;
+    const { name, template_name, language_code, contact_list_ids } = req.body || {};
 
-    if (!name || !template_name || !contact_list_ids) {
-      return res.status(400).json({ error: "Campaign name, template_name, and contact_list_ids are required" });
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: "Campaign name is required." });
+    }
+
+    if (!template_name || typeof template_name !== "string" || !template_name.trim()) {
+      return res.status(400).json({ error: "Template name is required." });
+    }
+
+    if (!contact_list_ids) {
+      return res.status(400).json({ error: "At least one contact list must be selected." });
     }
 
     let parsedListIds = [];
     try {
-      parsedListIds = JSON.parse(contact_list_ids);
+      parsedListIds = typeof contact_list_ids === "string" ? JSON.parse(contact_list_ids) : contact_list_ids;
     } catch (e) {
-      
       parsedListIds = [contact_list_ids];
     }
 
-    if (!Array.isArray(parsedListIds) || parsedListIds.length === 0) {
-      return res.status(400).json({ error: "No contact lists selected" });
+    if (!Array.isArray(parsedListIds)) {
+      parsedListIds = [parsedListIds];
     }
 
-    
+    parsedListIds = parsedListIds.filter(isValidUuid);
+
+    if (parsedListIds.length === 0) {
+      return res.status(400).json({ error: "No valid contact lists were selected." });
+    }
+
     let media_id = null;
     let media_type = null;
     let media_url = null;
@@ -76,24 +72,22 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
         media_type = "document";
       }
 
-      
       media_id = await uploadMediaToMeta(req.file.path, req.file.mimetype);
       if (!media_id) {
         return res.status(500).json({ error: "Failed to upload media to WhatsApp Meta API." });
       }
 
-      
       try {
         let resourceType = "auto";
         if (media_type === "image") resourceType = "image";
         if (media_type === "video") resourceType = "video";
         media_url = await uploadFileToCloudinary(req.file.path, "wp_automation/campaigns", resourceType);
       } catch (uploadErr) {
-        console.error("Cloudinary upload failed, proceeding without URL:", uploadErr);
+        console.warn("Media storage upload skipped, proceeding with Meta ID:", uploadErr.message);
       }
     }
 
-    
+    // Fetch distinct members across all chosen contact lists
     const membersResult = await db.query(
       `SELECT DISTINCT c.id, c.phone_number, c.name, c.city
        FROM contact_list_members clm
@@ -103,27 +97,24 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
     );
 
     if (membersResult.rows.length === 0) {
-      return res.status(400).json({ error: "Selected contact lists are empty or do not exist" });
+      return res.status(400).json({ error: "Selected contact lists have no recipients or are empty." });
     }
 
-    
-    
-    
     const campaignResult = await db.query(
       `INSERT INTO campaigns (name, template_name, contact_list_id, media_id, media_type, media_url, total_sent)
        VALUES ($1, $2, $3, $4, $5, $6, 0)
        RETURNING *`,
-      [name, template_name, parsedListIds[0], media_id, media_type, media_url]
+      [name.trim().slice(0, 255), template_name.trim(), parsedListIds[0], media_id, media_type, media_url]
     );
     const campaign = campaignResult.rows[0];
 
-    // Determine how many parameters the template needs
+    // Inspect template to know if body parameters are needed
     let paramCount = 0;
     try {
       const templates = await getTemplates();
-      const tpl = templates.find(t => t.name === template_name);
-      if (tpl) {
-        const bodyComponent = tpl.components.find(c => c.type === 'BODY');
+      const tpl = (templates || []).find((t) => t.name === template_name.trim());
+      if (tpl && tpl.components) {
+        const bodyComponent = tpl.components.find((c) => c.type === "BODY");
         if (bodyComponent && bodyComponent.text) {
           const matches = bodyComponent.text.match(/\{\{\d+\}\}/g);
           if (matches) paramCount = matches.length;
@@ -133,56 +124,50 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
       console.warn("Could not fetch templates to check params:", err.message);
     }
 
-    
-    const messages = membersResult.rows.map(member => {
+    const messages = membersResult.rows.map((member) => {
       const bodyParams = [];
       if (paramCount >= 1) {
         bodyParams.push({ type: "text", text: member.name || "Customer" });
       }
       if (paramCount >= 2) {
-        bodyParams.push({ type: "text", text: member.city || "Special Offer" });
+        bodyParams.push({ type: "text", text: member.city || "Valued Client" });
       }
       for (let i = 2; i < paramCount; i++) {
-        bodyParams.push({ type: "text", text: "Update" }); // Generic fallback for extra params
+        bodyParams.push({ type: "text", text: "Update" });
       }
 
-      const sanitizedPhone = member.phone_number ? member.phone_number.replace(/\D/g, '') : "";
-      
+      const sanitizedPhone = member.phone_number ? String(member.phone_number).replace(/\D/g, "") : "";
+
       return {
         to: sanitizedPhone,
         contactId: member.id,
-        bodyParams
+        bodyParams,
       };
     });
 
-    
     const io = req.app.get("io");
     await processCampaign(
-      messages, 
-      campaign.id, 
-      template_name, 
-      language_code || "en_US", 
+      messages,
+      campaign.id,
+      template_name.trim(),
+      language_code || "en_US",
       io,
       media_id,
       media_type
     );
 
-    // Auto-delete older campaigns, keeping only the last 50
-    try {
-      await db.query(`
-        DELETE FROM campaigns 
-        WHERE id NOT IN (
-          SELECT id FROM campaigns 
-          ORDER BY created_at DESC 
-          LIMIT 50
-        )
-      `);
-    } catch (cleanupErr) {
-      console.error("Cleanup error (auto-delete older than 50 campaigns):", cleanupErr);
-    }
+    // Keep history clean: automatically keep the last 100 campaigns
+    db.query(
+      `DELETE FROM campaigns 
+       WHERE id NOT IN (
+         SELECT id FROM campaigns 
+         ORDER BY created_at DESC 
+         LIMIT 100
+       )`
+    ).catch(() => {});
 
     res.status(201).json({
-      message: "Campaign created and processing started",
+      message: "Campaign launched and queued for delivery",
       campaign: {
         id: campaign.id,
         name: campaign.name,
@@ -193,13 +178,14 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Campaign creation error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to create and dispatch campaign." });
   }
 });
 
-
-
-
+/**
+ * GET /api/campaigns
+ * List all campaigns with aggregate delivery metrics
+ */
 router.get("/", async (req, res) => {
   try {
     const result = await db.query(
@@ -217,16 +203,21 @@ router.get("/", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ List campaigns error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to list campaigns." });
   }
 });
 
-
-
-
+/**
+ * GET /api/campaigns/:id
+ * Retrieve details and delivery metrics for a specific campaign
+ */
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid campaign ID format." });
+    }
 
     const campaignResult = await db.query(`SELECT * FROM campaigns WHERE id = $1`, [id]);
     if (campaignResult.rows.length === 0) {
@@ -249,16 +240,22 @@ router.get("/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Campaign detail error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch campaign details." });
   }
 });
 
-
-
-
+/**
+ * GET /api/campaigns/:id/recipients
+ * Retrieve individual recipient delivery statuses
+ */
 router.get("/:id/recipients", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid campaign ID format." });
+    }
+
     const result = await db.query(
       `SELECT m.id, c.phone_number, c.name, m.status, m.timestamp, m.error_message
        FROM messages m
@@ -270,18 +267,25 @@ router.get("/:id/recipients", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ Campaign recipients error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch campaign recipient list." });
   }
 });
 
+/**
+ * DELETE /api/campaigns/:id
+ * Delete campaign and associated messages
+ */
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    // Safely delete related messages first to avoid foreign key constraints
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid campaign ID format." });
+    }
+
     await db.query("DELETE FROM messages WHERE campaign_id = $1", [id]);
-    
-    const result = await db.query("DELETE FROM campaigns WHERE id = $1 RETURNING *", [id]);
-    
+    const result = await db.query("DELETE FROM campaigns WHERE id = $1 RETURNING id", [id]);
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Campaign not found" });
     }
@@ -289,7 +293,7 @@ router.delete("/:id", async (req, res) => {
     res.json({ message: "Campaign deleted successfully" });
   } catch (err) {
     console.error("❌ Campaign deletion error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to delete campaign." });
   }
 });
 

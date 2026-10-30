@@ -2,9 +2,25 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
+const isValidUuid = (val) =>
+  typeof val === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
+const cleanPhoneNumber = (raw) => {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.startsWith("0") && digits.length === 11) {
+    digits = "91" + digits.slice(1);
+  } else if (digits.length === 10) {
+    digits = "91" + digits;
+  }
+  return digits;
+};
 
-
+/**
+ * GET /api/contacts
+ * Returns list of contacts with latest message preview and unread counts
+ */
 router.get("/", async (req, res) => {
   try {
     const result = await db.query(
@@ -45,23 +61,28 @@ router.get("/", async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("❌ List contacts error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch contact directory." });
   }
 });
 
-
-
-
+/**
+ * GET /api/contacts/:id
+ * Retrieve specific contact details and 24h window status
+ */
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
     const result = await db.query(`SELECT * FROM contacts WHERE id = $1`, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Contact not found" });
     }
 
-    
     const lastInbound = await db.query(
       `SELECT timestamp FROM messages
        WHERE contact_id = $1 AND direction = 'inbound' AND timestamp IS NOT NULL
@@ -79,35 +100,38 @@ router.get("/:id", async (req, res) => {
     res.json(contact);
   } catch (err) {
     console.error("❌ Contact detail error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to retrieve contact details." });
   }
 });
 
+/**
+ * POST /api/contacts
+ * Add a new contact
+ */
 router.post("/", async (req, res) => {
   try {
-    const { name, phone_number, city } = req.body;
+    const { name, phone_number, city } = req.body || {};
     if (!phone_number) {
       return res.status(400).json({ error: "Phone number is required." });
     }
-    let cleanedPhone = String(phone_number).replace(/\D/g, "");
-    if (cleanedPhone.startsWith("0") && cleanedPhone.length === 11) {
-      cleanedPhone = "91" + cleanedPhone.slice(1);
-    } else if (cleanedPhone.length === 10) {
-      cleanedPhone = "91" + cleanedPhone;
-    }
+
+    const cleanedPhone = cleanPhoneNumber(phone_number);
 
     if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
-      return res.status(400).json({ error: "Please enter a valid 10-digit phone number." });
+      return res.status(400).json({ error: "Please enter a valid 10 to 15-digit phone number." });
     }
-    
+
     const checkResult = await db.query("SELECT id FROM contacts WHERE phone_number = $1", [cleanedPhone]);
     if (checkResult.rows.length > 0) {
       return res.status(400).json({ error: "A contact with this phone number already exists." });
     }
 
+    const safeName = (typeof name === "string" ? name.trim().slice(0, 255) : "") || "Unknown";
+    const safeCity = typeof city === "string" ? city.trim().slice(0, 255) : "";
+
     const result = await db.query(
       "INSERT INTO contacts (name, phone_number, city) VALUES ($1, $2, $3) RETURNING *",
-      [(name || "").trim() || "Unknown", cleanedPhone, (city || "").trim()]
+      [safeName, cleanedPhone, safeCity]
     );
 
     res.status(201).json({ message: "Contact added successfully", contact: result.rows[0] });
@@ -117,25 +141,44 @@ router.post("/", async (req, res) => {
   }
 });
 
+/**
+ * PUT /api/contacts/:id
+ * Update contact details
+ */
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone_number, city } = req.body;
-    
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
+    const { name, phone_number, city } = req.body || {};
+
     if (!phone_number) {
       return res.status(400).json({ error: "Phone number is required" });
     }
-    const cleanedPhone = phone_number.replace(/\D/g, "");
-    
+
+    const cleanedPhone = cleanPhoneNumber(phone_number);
+    if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
+      return res.status(400).json({ error: "Please enter a valid 10 to 15-digit phone number." });
+    }
+
     // Check if another contact has this phone number
-    const checkResult = await db.query("SELECT id FROM contacts WHERE phone_number = $1 AND id != $2", [cleanedPhone, id]);
+    const checkResult = await db.query("SELECT id FROM contacts WHERE phone_number = $1 AND id != $2", [
+      cleanedPhone,
+      id,
+    ]);
     if (checkResult.rows.length > 0) {
       return res.status(400).json({ error: "Another contact with this phone number already exists" });
     }
 
+    const safeName = (typeof name === "string" ? name.trim().slice(0, 255) : "") || "Unknown";
+    const safeCity = typeof city === "string" ? city.trim().slice(0, 255) : "";
+
     const result = await db.query(
       "UPDATE contacts SET name = $1, phone_number = $2, city = $3 WHERE id = $4 RETURNING *",
-      [name || "Unknown", cleanedPhone, city || "", id]
+      [safeName, cleanedPhone, safeCity, id]
     );
 
     if (result.rows.length === 0) {
@@ -145,18 +188,26 @@ router.put("/:id", async (req, res) => {
     res.json({ message: "Contact updated successfully", contact: result.rows[0] });
   } catch (err) {
     console.error("❌ Update contact error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to update contact." });
   }
 });
 
+/**
+ * DELETE /api/contacts/:id
+ * Delete contact and associations safely
+ */
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
+
+    if (!isValidUuid(id)) {
+      return res.status(400).json({ error: "Invalid contact ID format." });
+    }
+
     await db.query("DELETE FROM contact_list_members WHERE contact_id = $1", [id]);
     await db.query("DELETE FROM messages WHERE contact_id = $1", [id]);
     const result = await db.query("DELETE FROM contacts WHERE id = $1 RETURNING *", [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Contact not found" });
     }
@@ -164,7 +215,7 @@ router.delete("/:id", async (req, res) => {
     res.json({ message: "Contact deleted successfully" });
   } catch (err) {
     console.error("❌ Contact deletion error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to delete contact." });
   }
 });
 

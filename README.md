@@ -1,14 +1,15 @@
-# WP Automation Backend
+# Morihix Digital Backend
 
-This is the backend service for the WhatsApp Automation system. It provides a RESTful API and webhook handling for managing WhatsApp campaigns, contacts, and real-time messaging using the official WhatsApp Cloud API.
+This is the high-performance backend service for Morihix Digital. It provides RESTful APIs, real-time Socket.IO events, and webhook handling for managing WhatsApp campaigns, contacts, media, and real-time messaging using the official WhatsApp Cloud API.
 
 ## Features
 
 - **WhatsApp Cloud API Integration:** Sends and receives messages, media, and template messages.
-- **Webhook Handling:** Listens for inbound messages, delivery statuses, and read receipts.
-- **Campaign Management:** Built-in pacing logic (via BullMQ or in-memory fallback) to prevent spam blocks by Meta.
-- **Database:** Supabase PostgreSQL for storing contacts, messages, and campaigns.
+- **Webhook Handling:** Listens for inbound messages, delivery statuses, and read receipts with indexed lookup.
+- **Campaign Management:** Built-in pacing logic to prevent spam blocks by Meta.
+- **Database:** PostgreSQL with indexed lookups for contacts, messages, and campaigns.
 - **Media Uploads:** Cloudinary integration for handling inbound and outbound media.
+- **Security & Reliability:** IP abuse jail defense, rate limiting, universal permissive CORS, in-memory caching, and resilient edge-case handling.
 
 ## Setup Instructions
 
@@ -31,10 +32,10 @@ This is the backend service for the WhatsApp Automation system. It provides a RE
    WHATSAPP_BUSINESS_ACCOUNT_ID=...
    META_ACCESS_TOKEN=...
    META_API_VERSION=v17.0
-   WEBHOOK_VERIFY_TOKEN=wpautomation
+   WEBHOOK_VERIFY_TOKEN=morihix_verify_token
    
    REDIS_URL=redis://localhost:6379
-   FRONTEND_URL=https://wpautomationfrontend.vercel.app
+   FRONTEND_URL=http://localhost:3000
    CLOUDINARY_URL=cloudinary://...
    ```
 

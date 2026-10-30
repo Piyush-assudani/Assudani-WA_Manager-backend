@@ -1,19 +1,34 @@
 const axios = require("axios");
+const fs = require("fs");
+const FormData = require("form-data");
 
-const META_API_BASE = `https://graph.facebook.com/${process.env.META_API_VERSION}`;
-const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+/**
+ * Returns dynamic Meta configuration from environment variables
+ */
+const getMetaConfig = () => {
+  const version = process.env.META_API_VERSION || "v17.0";
+  const apiBase = `https://graph.facebook.com/${version}`;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.META_ACCESS_TOKEN;
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  return { apiBase, phoneId, token, wabaId };
+};
 
 const sendTemplateMessage = async (to, templateName, languageCode = "en_US", components = []) => {
-  try {
-    // Sanitize phone number - remove +, spaces, dashes, etc.
-    const sanitizedTo = to ? to.replace(/\D/g, '') : "";
-    if (!sanitizedTo) {
-      console.error(`❌ Invalid phone number: "${to}"`);
-      return { success: false, error: `Invalid phone number: "${to}"` };
-    }
+  const { apiBase, phoneId, token } = getMetaConfig();
 
-    console.log(`📤 Sending template "${templateName}" to ${sanitizedTo}`);
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta WhatsApp Cloud API credentials (PHONE_NUMBER_ID / ACCESS_TOKEN) not configured in backend .env.",
+    };
+  }
+
+  try {
+    const sanitizedTo = to ? String(to).replace(/\D/g, "") : "";
+    if (!sanitizedTo || sanitizedTo.length < 10) {
+      return { success: false, error: `Invalid recipient phone number: "${to}"` };
+    }
 
     const payload = {
       messaging_product: "whatsapp",
@@ -25,22 +40,18 @@ const sendTemplateMessage = async (to, templateName, languageCode = "en_US", com
       },
     };
 
-    if (components.length > 0) {
+    if (components && components.length > 0) {
       payload.template.components = components;
     }
 
-    const response = await axios.post(
-      `${META_API_BASE}/${PHONE_NUMBER_ID}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const response = await axios.post(`${apiBase}/${phoneId}/messages`, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 15000,
+    });
 
-    console.log(`✅ Message sent to ${sanitizedTo}, ID: ${response.data.messages?.[0]?.id}`);
     return {
       success: true,
       messageId: response.data.messages?.[0]?.id || null,
@@ -56,24 +67,31 @@ const sendTemplateMessage = async (to, templateName, languageCode = "en_US", com
 };
 
 const sendTextMessage = async (to, text) => {
+  const { apiBase, phoneId, token } = getMetaConfig();
+
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta WhatsApp Cloud API credentials not configured in backend .env.",
+    };
+  }
+
   try {
+    const sanitizedTo = to ? String(to).replace(/\D/g, "") : "";
     const payload = {
       messaging_product: "whatsapp",
-      to,
+      to: sanitizedTo,
       type: "text",
       text: { body: text },
     };
 
-    const response = await axios.post(
-      `${META_API_BASE}/${PHONE_NUMBER_ID}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const response = await axios.post(`${apiBase}/${phoneId}/messages`, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 15000,
+    });
 
     return {
       success: true,
@@ -90,8 +108,17 @@ const sendTextMessage = async (to, text) => {
 };
 
 const sendMediaMessage = async (to, mediaUrl, type = "image") => {
+  const { apiBase, phoneId, token } = getMetaConfig();
+
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta WhatsApp Cloud API credentials not configured in backend .env.",
+    };
+  }
+
   try {
-    const sanitizedTo = to ? to.replace(/\D/g, '') : "";
+    const sanitizedTo = to ? String(to).replace(/\D/g, "") : "";
     const payload = {
       messaging_product: "whatsapp",
       to: sanitizedTo,
@@ -99,16 +126,13 @@ const sendMediaMessage = async (to, mediaUrl, type = "image") => {
       [type]: { link: mediaUrl },
     };
 
-    const response = await axios.post(
-      `${META_API_BASE}/${PHONE_NUMBER_ID}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const response = await axios.post(`${apiBase}/${phoneId}/messages`, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    });
 
     return {
       success: true,
@@ -124,26 +148,27 @@ const sendMediaMessage = async (to, mediaUrl, type = "image") => {
   }
 };
 
-const fs = require("fs");
-const FormData = require("form-data");
-
 const uploadMediaToMeta = async (filePath, mimeType) => {
+  const { apiBase, phoneId, token } = getMetaConfig();
+
+  if (!token || !phoneId) {
+    console.warn("⚠️ Meta Cloud credentials not set; skipping uploadMediaToMeta");
+    return null;
+  }
+
   try {
     const formData = new FormData();
     formData.append("file", fs.createReadStream(filePath));
     formData.append("type", mimeType);
     formData.append("messaging_product", "whatsapp");
 
-    const response = await axios.post(
-      `${META_API_BASE}/${PHONE_NUMBER_ID}/media`,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          ...formData.getHeaders(),
-        },
-      }
-    );
+    const response = await axios.post(`${apiBase}/${phoneId}/media`, formData, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...formData.getHeaders(),
+      },
+      timeout: 30000,
+    });
 
     return response.data.id;
   } catch (err) {
@@ -153,30 +178,31 @@ const uploadMediaToMeta = async (filePath, mimeType) => {
 };
 
 const downloadMediaFromMeta = async (mediaId) => {
+  const { apiBase, token } = getMetaConfig();
+
+  if (!token) return null;
+
   try {
-    
-    const urlResponse = await axios.get(
-      `${META_API_BASE}/${mediaId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-        },
-      }
-    );
+    const urlResponse = await axios.get(`${apiBase}/${mediaId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      timeout: 15000,
+    });
 
     const mediaUrl = urlResponse.data.url;
     const mimeType = urlResponse.data.mime_type;
 
     if (!mediaUrl) {
-      throw new Error("No media URL returned");
+      throw new Error("No media URL returned by Meta");
     }
 
-    
     const mediaResponse = await axios.get(mediaUrl, {
       responseType: "arraybuffer",
       headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        Authorization: `Bearer ${token}`,
       },
+      timeout: 30000,
     });
 
     return {
@@ -189,56 +215,71 @@ const downloadMediaFromMeta = async (mediaId) => {
   }
 };
 
-const WABA_ID = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-
 const getTemplates = async () => {
-  try {
-    const response = await axios.get(
-      `${META_API_BASE}/${WABA_ID}/message_templates`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-        },
-        params: {
-          limit: 100,
-          fields: "name,status,category,language,components,id,last_updated_time",
-        }
-      }
-    );
+  const { apiBase, token, wabaId } = getMetaConfig();
 
-    
+  if (!token || !wabaId) {
+    return [];
+  }
+
+  try {
+    const response = await axios.get(`${apiBase}/${wabaId}/message_templates`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        limit: 100,
+        fields: "name,status,category,language,components,id,last_updated_time",
+      },
+      timeout: 15000,
+    });
+
     return response.data.data || [];
   } catch (err) {
     console.error("❌ Meta API getTemplates error:", err.response?.data || err.message);
     throw new Error(err.response?.data?.error?.message || err.message);
   }
 };
-const createTemplate = async (name, language, category, text, headerType = "NONE", headerText = "", footerText = "", buttons = []) => {
+
+const createTemplate = async (
+  name,
+  language,
+  category,
+  text,
+  headerType = "NONE",
+  headerText = "",
+  footerText = "",
+  buttons = []
+) => {
+  const { apiBase, token, wabaId } = getMetaConfig();
+
+  if (!token || !wabaId) {
+    throw new Error("Meta WABA_ID or META_ACCESS_TOKEN is missing in backend .env.");
+  }
+
   try {
     const components = [
       {
         type: "BODY",
         text: text,
-      }
+      },
     ];
 
     if (headerType && headerType !== "NONE") {
-      if (headerType === "TEXT" && !headerText) {
-        // Skip header if it's TEXT but the text is empty
-      } else {
-        const headerComp = {
+      if (headerType === "TEXT" && headerText) {
+        components.unshift({
+          type: "HEADER",
+          format: "TEXT",
+          text: headerText,
+        });
+      } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(headerType)) {
+        components.unshift({
           type: "HEADER",
           format: headerType,
-        };
-        if (headerType === "TEXT") {
-          headerComp.text = headerText;
-        } else if (headerType === "IMAGE" || headerType === "VIDEO" || headerType === "DOCUMENT") {
-          // Meta requires an example object for media headers
-          headerComp.example = {
-            header_handle: ["4:YXNpY..."] // Dummy handle, Meta sometimes accepts dummy for creation
-          };
-        }
-        components.unshift(headerComp);
+          example: {
+            header_handle: ["4:YXNpY..."],
+          },
+        });
       }
     }
 
@@ -249,40 +290,42 @@ const createTemplate = async (name, language, category, text, headerType = "NONE
       });
     }
 
-    if (buttons && buttons.length > 0) {
+    if (buttons && Array.isArray(buttons) && buttons.length > 0) {
       const buttonComponent = {
         type: "BUTTONS",
-        buttons: buttons.map(btn => {
-          if (btn.type === "QUICK_REPLY") {
-            return { type: "QUICK_REPLY", text: btn.text };
-          } else if (btn.type === "URL") {
-            return { type: "URL", text: btn.text, url: btn.url };
-          } else if (btn.type === "PHONE_NUMBER") {
-            return { type: "PHONE_NUMBER", text: btn.text, phone_number: btn.phone_number };
-          }
-          return null;
-        }).filter(Boolean),
+        buttons: buttons
+          .map((btn) => {
+            if (btn.type === "QUICK_REPLY") {
+              return { type: "QUICK_REPLY", text: btn.text };
+            } else if (btn.type === "URL") {
+              return { type: "URL", text: btn.text, url: btn.url };
+            } else if (btn.type === "PHONE_NUMBER") {
+              return { type: "PHONE_NUMBER", text: btn.text, phone_number: btn.phone_number };
+            }
+            return null;
+          })
+          .filter(Boolean),
       };
-      components.push(buttonComponent);
+      if (buttonComponent.buttons.length > 0) {
+        components.push(buttonComponent);
+      }
     }
 
     const payload = {
       name: name.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
       language,
       category,
-      components: components,
+      components,
     };
 
-    const response = await axios.post(
-      `${META_API_BASE}/${WABA_ID}/message_templates`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const response = await axios.post(`${apiBase}/${wabaId}/message_templates`, payload, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    });
+
     return response.data;
   } catch (err) {
     console.error("❌ Meta API createTemplate error:", err.response?.data || err.message);
@@ -291,13 +334,23 @@ const createTemplate = async (name, language, category, text, headerType = "NONE
 };
 
 const getAccountHealth = async () => {
+  const { apiBase, phoneId, token } = getMetaConfig();
+
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta API credentials not set in backend .env.",
+    };
+  }
+
   try {
     const response = await axios.get(
-      `${META_API_BASE}/${PHONE_NUMBER_ID}?fields=display_phone_number,name_status,quality_rating,messaging_limit_tier,status`,
+      `${apiBase}/${phoneId}?fields=display_phone_number,name_status,quality_rating,messaging_limit_tier,status,verified_name`,
       {
         headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          Authorization: `Bearer ${token}`,
         },
+        timeout: 10000,
       }
     );
     return { success: true, data: response.data };
@@ -307,12 +360,12 @@ const getAccountHealth = async () => {
   }
 };
 
-module.exports = { 
-  sendTemplateMessage, 
-  sendTextMessage, 
-  uploadMediaToMeta, 
-  downloadMediaFromMeta, 
-  getTemplates, 
+module.exports = {
+  sendTemplateMessage,
+  sendTextMessage,
+  uploadMediaToMeta,
+  downloadMediaFromMeta,
+  getTemplates,
   createTemplate,
   sendMediaMessage,
   getAccountHealth,
