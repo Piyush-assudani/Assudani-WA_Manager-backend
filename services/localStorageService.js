@@ -13,9 +13,12 @@ if (!fs.existsSync(UPLOADS_ROOT)) {
  * Returns the public base URL for serving uploaded files.
  */
 function getBaseUrl() {
-  const envUrl = process.env.BASE_URL;
+  const envUrl = process.env.BASE_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
   if (envUrl && envUrl.trim() !== "") {
     return envUrl.trim().replace(/\/+$/, "");
+  }
+  if (process.env.NODE_ENV === "production") {
+    return "https://morihix-wp.piyushassudani.in";
   }
   const port = process.env.PORT || 5001;
   return `http://localhost:${port}`;

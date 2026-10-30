@@ -59,17 +59,63 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
       return res.status(400).json({ error: "No valid contact lists were selected." });
     }
 
+    // Inspect template to verify header requirements, language, and body parameters
+    let paramCount = 0;
+    let templateRequiresMediaHeader = false;
+    let requiredHeaderFormat = null;
+    let resolvedLanguageCode = language_code || "en_US";
+    let templateFetched = false;
+
+    try {
+      const templates = await getTemplates();
+      const tpl = (templates || []).find((t) => t.name === template_name.trim());
+      if (tpl) {
+        templateFetched = true;
+        if (tpl.language) {
+          resolvedLanguageCode = tpl.language;
+        }
+        if (tpl.components) {
+          const headerComponent = tpl.components.find((c) => c.type === "HEADER");
+          if (headerComponent && ["IMAGE", "VIDEO", "DOCUMENT"].includes(headerComponent.format)) {
+            templateRequiresMediaHeader = true;
+            requiredHeaderFormat = headerComponent.format.toLowerCase();
+          }
+
+          const bodyComponent = tpl.components.find((c) => c.type === "BODY");
+          if (bodyComponent && bodyComponent.text) {
+            const matches = bodyComponent.text.match(/\{\{\d+\}\}/g);
+            if (matches) paramCount = new Set(matches).size;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch templates to check params:", err.message);
+    }
+
+    if (templateFetched && templateRequiresMediaHeader && !req.file) {
+      return res.status(400).json({
+        error: `Template "${template_name.trim()}" requires a ${requiredHeaderFormat} header. Please attach a ${requiredHeaderFormat} file before launching.`,
+      });
+    }
+
     let media_id = null;
     let media_type = null;
     let media_url = null;
 
-    if (req.file) {
+    // Only upload and attach media header if the template actually expects a media header (or if template lookup failed)
+    if (req.file && (!templateFetched || templateRequiresMediaHeader)) {
       if (req.file.mimetype.startsWith("image/")) {
         media_type = "image";
       } else if (req.file.mimetype.startsWith("video/")) {
         media_type = "video";
       } else {
         media_type = "document";
+      }
+
+      if (templateRequiresMediaHeader && requiredHeaderFormat && media_type !== requiredHeaderFormat) {
+        return res.status(400).json({
+          error: `Template "${template_name.trim()}" requires a ${requiredHeaderFormat} header, but a ${media_type} file was uploaded.`,
+        });
       }
 
       media_id = await uploadMediaToMeta(req.file.path, req.file.mimetype);
@@ -108,22 +154,6 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
     );
     const campaign = campaignResult.rows[0];
 
-    // Inspect template to know if body parameters are needed
-    let paramCount = 0;
-    try {
-      const templates = await getTemplates();
-      const tpl = (templates || []).find((t) => t.name === template_name.trim());
-      if (tpl && tpl.components) {
-        const bodyComponent = tpl.components.find((c) => c.type === "BODY");
-        if (bodyComponent && bodyComponent.text) {
-          const matches = bodyComponent.text.match(/\{\{\d+\}\}/g);
-          if (matches) paramCount = matches.length;
-        }
-      }
-    } catch (err) {
-      console.warn("Could not fetch templates to check params:", err.message);
-    }
-
     const messages = membersResult.rows.map((member) => {
       const bodyParams = [];
       if (paramCount >= 1) {
@@ -150,7 +180,7 @@ router.post("/", uploadMedia.single("mediaFile"), async (req, res) => {
       messages,
       campaign.id,
       template_name.trim(),
-      language_code || "en_US",
+      resolvedLanguageCode,
       io,
       media_id,
       media_type

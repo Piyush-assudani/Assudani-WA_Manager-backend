@@ -61,9 +61,13 @@ const sendTemplateMessage = async (to, templateName, languageCode = "en_US", com
     };
   } catch (err) {
     console.error(`❌ Meta API sendTemplate error for ${to}:`, err.response?.data || err.message);
+    const metaErr = err.response?.data?.error;
+    const detailedError = metaErr?.error_data?.details
+      ? `${metaErr.message} (${metaErr.error_data.details})`
+      : metaErr?.user_msg || metaErr?.message || err.message;
     return {
       success: false,
-      error: err.response?.data?.error?.message || err.message,
+      error: detailedError,
     };
   }
 };

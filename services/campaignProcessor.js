@@ -69,16 +69,16 @@ const initBullMQ = (io) => {
 
         const result = await sendTemplateMessage(to, templateName, languageCode, components);
 
-        
         await db.query(
-          `INSERT INTO messages (campaign_id, contact_id, direction, message_body, meta_message_id, status, timestamp)
-           VALUES ($1, $2, 'outbound', $3, $4, $5, NOW())`,
+          `INSERT INTO messages (campaign_id, contact_id, direction, message_body, meta_message_id, status, error_message, timestamp)
+           VALUES ($1, $2, 'outbound', $3, $4, $5, $6, NOW())`,
           [
             campaignId,
             contactId,
             `[Template: ${templateName}]`,
             result.messageId || null,
             result.success ? "sent" : "failed",
+            result.success ? null : (result.error || "Failed to send template message via Meta API"),
           ]
         );
 
@@ -159,14 +159,15 @@ const processInMemory = async (messages, campaignId, templateName, languageCode,
       const result = await sendTemplateMessage(to, templateName, languageCode, messageComponents);
 
       await db.query(
-        `INSERT INTO messages (campaign_id, contact_id, direction, message_body, meta_message_id, status, timestamp)
-         VALUES ($1, $2, 'outbound', $3, $4, $5, NOW())`,
+        `INSERT INTO messages (campaign_id, contact_id, direction, message_body, meta_message_id, status, error_message, timestamp)
+         VALUES ($1, $2, 'outbound', $3, $4, $5, $6, NOW())`,
         [
           campaignId,
           contactId,
           `[Template: ${templateName}]`,
           result.messageId || null,
           result.success ? "sent" : "failed",
+          result.success ? null : (result.error || "Failed to send template message via Meta API"),
         ]
       );
 
@@ -187,6 +188,16 @@ const processInMemory = async (messages, campaignId, templateName, languageCode,
       }
     } catch (error) {
       console.error(`Error sending message to ${to}:`, error);
+      await db.query(
+        `INSERT INTO messages (campaign_id, contact_id, direction, message_body, meta_message_id, status, error_message, timestamp)
+         VALUES ($1, $2, 'outbound', $3, NULL, 'failed', $4, NOW())`,
+        [
+          campaignId,
+          contactId,
+          `[Template: ${templateName}]`,
+          error.message || "Unexpected error while sending template message",
+        ]
+      ).catch(() => {});
     }
 
     

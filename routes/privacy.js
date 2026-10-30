@@ -1,4 +1,7 @@
-<!DOCTYPE html>
+const express = require("express");
+const router = express.Router();
+
+const PRIVACY_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -334,4 +337,12 @@
   </footer>
 
 </body>
-</html>
+</html>`;
+
+router.get("/", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(PRIVACY_HTML);
+});
+
+module.exports = router;
+

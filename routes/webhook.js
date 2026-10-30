@@ -221,7 +221,10 @@ router.post("/", async (req, res) => {
               // Extract error message if failed
               let errorMsg = null;
               if (newStatus === "failed" && status.errors && status.errors.length > 0) {
-                errorMsg = status.errors[0].message || status.errors[0].title || "Unknown error";
+                const errObj = status.errors[0];
+                const details = errObj.error_data?.details;
+                const baseMsg = errObj.message || errObj.title || "Unknown error";
+                errorMsg = details ? `${baseMsg} (${details})` : baseMsg;
               }
 
               await db.query(

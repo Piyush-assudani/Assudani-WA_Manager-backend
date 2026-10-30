@@ -137,6 +137,7 @@ const contactListsRoutes = require("./routes/contact_lists");
 const templateRoutes = require("./routes/templates");
 const mediaRoutes = require("./routes/media");
 const dashboardRoutes = require("./routes/dashboard");
+const privacyRoutes = require("./routes/privacy");
 
 app.use("/api", apiLimiter, apiRoutes);
 app.use("/api/auth", authLimiter, authRoutes);
@@ -147,14 +148,9 @@ app.use("/api/campaigns", campaignRoutes);
 app.use("/api/templates", templateRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/privacy", privacyRoutes);
+app.use("/privacy", privacyRoutes);
 app.use("/webhook", webhookRoutes);
-
-// Privacy Policy Endpoint & Static Hosting
-const privacyPath = path.join(__dirname, "privacy");
-app.use("/privacy", express.static(privacyPath));
-app.get("/privacy", (req, res) => {
-  res.sendFile(path.join(privacyPath, "index.html"));
-});
 
 // Local Media & Uploads Static Hosting
 const uploadsPath = path.join(__dirname, "uploads");
