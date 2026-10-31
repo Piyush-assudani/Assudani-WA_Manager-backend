@@ -1,47 +1,33 @@
-# Morihix Digital Backend
+# Assudani WA Manager Backend
 
-This is the high-performance backend service for Morihix Digital. It provides RESTful APIs, real-time Socket.IO events, and webhook handling for managing WhatsApp campaigns, contacts, media, and real-time messaging using the official WhatsApp Cloud API.
+This is the high-performance backend service for Assudani WA Manager. It provides RESTful APIs, real-time Socket.IO events, direct WhatsApp Web QR multi-device engine (Baileys), and webhook handling for managing WhatsApp campaigns, contacts, media, and real-time messaging using both the official WhatsApp Cloud API and linked WhatsApp Web sessions.
 
 ## Features
 
-- **WhatsApp Cloud API Integration:** Sends and receives messages, media, and template messages.
-- **Webhook Handling:** Listens for inbound messages, delivery statuses, and read receipts with indexed lookup.
-- **Campaign Management:** Built-in pacing logic to prevent spam blocks by Meta.
-- **Database:** PostgreSQL with indexed lookups for contacts, messages, and campaigns.
-- **Media Uploads:** Cloudinary integration for handling inbound and outbound media.
-- **Security & Reliability:** IP abuse jail defense, rate limiting, universal permissive CORS, in-memory caching, and resilient edge-case handling.
+- **Dual WhatsApp Engines:**
+  - **WhatsApp Web QR Engine:** Scan QR from mobile WhatsApp (Linked Devices) to send unrestricted messages with no 24-hour template limits.
+  - **Meta Cloud API Engine:** Official Meta Cloud API integration for template broadcasts, marketing campaigns, and business messaging.
+- **External Project Integration API:** Dedicated `/api/qr-session/send-message` endpoint allowing external apps, services, and scripts to send messages.
+- **Frontend .env Configurator:** Update and upload WhatsApp environment credentials safely from the frontend panel.
+- **Real-time Live Chat:** Socket.IO enabled messaging for instant inbound and outbound synchronization.
+- **PostgreSQL / Supabase Database Support:** Contact lists, broadcast tracking, and message history.
 
 ## Setup Instructions
 
 1. **Install dependencies:**
    ```bash
+   cd backend
    npm install
    ```
 
-2. **Environment Variables:** Create a `.env` file with the following variables:
-   ```env
-   PORT=5001
-   NODE_ENV=production
-   USE_REDIS=false # Set to true to enable BullMQ pacing
-   DATABASE_URL=postgres://<user>:<password>@<host>:5432/postgres
-   SUPABASE_URL=https://<your-supabase-url>
-   SUPABASE_KEY=<your-supabase-key>
-   
-   # Meta WhatsApp API
-   WHATSAPP_PHONE_NUMBER_ID=...
-   WHATSAPP_BUSINESS_ACCOUNT_ID=...
-   META_ACCESS_TOKEN=...
-   META_API_VERSION=v17.0
-   WEBHOOK_VERIFY_TOKEN=morihix_verify_token
-   
-   REDIS_URL=redis://localhost:6379
-   FRONTEND_URL=http://localhost:3000
-   CLOUDINARY_URL=cloudinary://...
+2. **Environment Configuration:**
+   Copy `.env.example` to `.env` or configure via the frontend panel under WhatsApp Manager.
+   ```bash
+   cp .env.example .env
    ```
 
-3. **Start the server:**
+3. **Run the backend:**
    ```bash
-   npm start
-   # or for development with nodemon:
    npm run dev
    ```
+   Server listens on `http://localhost:5001`.

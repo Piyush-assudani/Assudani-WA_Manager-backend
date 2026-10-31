@@ -138,8 +138,12 @@ const templateRoutes = require("./routes/templates");
 const mediaRoutes = require("./routes/media");
 const dashboardRoutes = require("./routes/dashboard");
 const privacyRoutes = require("./routes/privacy");
+const qrSessionRoutes = require("./routes/qrSession");
+const wpConfigRoutes = require("./routes/wpConfig");
+const sendDirectRoutes = require("./routes/sendDirect");
 
 app.use("/api", apiLimiter, apiRoutes);
+app.use("/api/send", sendDirectRoutes);
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/contact_lists", contactListsRoutes);
 app.use("/api/contacts", contactRoutes);
@@ -149,6 +153,8 @@ app.use("/api/templates", templateRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/privacy", privacyRoutes);
+app.use("/api/qr-session", qrSessionRoutes);
+app.use("/api/wp-config", wpConfigRoutes);
 app.use("/privacy", privacyRoutes);
 app.use("/webhook", webhookRoutes);
 
@@ -162,7 +168,7 @@ app.use("/uploads", express.static(uploadsPath));
 // API Root Status
 app.get("/", (req, res) => {
   res.json({
-    message: "Morihix Digital Backend API",
+    message: "Assudani WA Manager Backend API",
     status: "running",
     timestamp: new Date().toISOString(),
     endpoints: {
@@ -175,6 +181,13 @@ app.get("/", (req, res) => {
       webhook: "GET/POST /webhook",
       privacy: "GET /privacy",
       uploads: "GET /uploads/:folder/:filename",
+      qr_session_status: "GET /api/qr-session/status",
+      qr_session_send: "POST /api/qr-session/send-message",
+      qr_session_integration: "GET /api/qr-session/integration-info",
+      universal_send: "POST /api/send",
+      universal_send_info: "GET /api/send/info",
+      wp_config: "GET/POST /api/wp-config",
+      wp_config_upload: "POST /api/wp-config/upload-env",
     },
   });
 });
@@ -194,11 +207,17 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================
-// Campaign Processor & Worker Initialization
+// Campaign Processor & WhatsApp QR Engine
 // ============================================
 const { initBullMQ } = require("./services/campaignProcessor");
+const baileysService = require("./services/baileysService");
 const db = require("./db");
+
 initBullMQ(io);
+// Start WhatsApp Web socket engine with Socket.IO
+baileysService.initBaileys(io).catch((err) => {
+  console.warn("⚠️ Baileys engine init notice:", err.message);
+});
 
 // Auto-migrate any legacy localhost media URLs in database to production public domain
 db.query(`
@@ -211,10 +230,11 @@ db.query(`
 
 // Server Listen
 server.listen(PORT, () => {
-  console.log(`🚀 Morihix Digital Backend running on http://localhost:${PORT}`);
+  console.log(`🚀 Assudani WA Manager Backend running on http://localhost:${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🔌 WebSocket server ready`);
   console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook`);
+  console.log(`📱 WhatsApp QR session endpoint: http://localhost:${PORT}/api/qr-session/status`);
 });
 
 process.on("uncaughtException", (err) => {

@@ -10,8 +10,7 @@ const HEALTH_CACHE_TTL = 30 * 1000;
 router.get("/health", (req, res) => {
   res.json({
     status: "ok",
-    app: "Morihix Digital",
-    app: "Morihix Digital",
+    app: "Assudani WA Manager",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
