@@ -219,4 +219,27 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/contacts/:id/meta
+ * Update contact tags and internal team notes
+ */
+router.patch("/:id/meta", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tags, notes } = req.body || {};
+    const localDb = require("../db/localDb");
+
+    localDb.update("contacts", (c) => c.id === id, {
+      ...(Array.isArray(tags) ? { tags } : {}),
+      ...(typeof notes === "string" ? { notes } : {}),
+    });
+
+    const contact = localDb.findOne("contacts", (c) => c.id === id);
+    res.json({ success: true, contact });
+  } catch (err) {
+    console.error("❌ Update contact meta error:", err);
+    res.status(500).json({ error: "Failed to update contact tags or notes." });
+  }
+});
+
 module.exports = router;

@@ -1,0 +1,93 @@
+{
+  "users": [
+    {
+      "id": "usr_admin_piyush",
+      "username": "piyushassudani",
+      "password": "$2b$10$cufimbcuMZXKEz7SguPspugdBubjrzvUB862meO3/CghwTxy5f2w6",
+      "plain_fallback": "piyush@9413879444",
+      "role": "admin",
+      "name": "Piyush Assudani",
+      "created_at": "2026-10-31T13:11:15.840Z"
+    }
+  ],
+  "contacts": [],
+  "contact_lists": [],
+  "contact_list_members": [],
+  "messages": [],
+  "campaigns": [],
+  "templates": [],
+  "media_assets": [],
+  "auto_replies": [
+    {
+      "id": "ar_price",
+      "keyword": "price",
+      "match_type": "contains",
+      "reply_text": "Namaste! Humare packages & pricing details ke liye kripya hamari website check karein ya humse connect karein. Hum aapko jald hi rate list bhej rahe hain.",
+      "is_active": true,
+      "created_at": "2026-10-31T13:11:15.845Z"
+    },
+    {
+      "id": "ar_offer",
+      "keyword": "offer",
+      "match_type": "contains",
+      "reply_text": "Dhamaka Offer! Aaj hi contact karne par payein special discount. Details jald aapse share ki jaayegi.",
+      "is_active": true,
+      "created_at": "2026-10-31T13:11:15.845Z"
+    },
+    {
+      "id": "ar_menu",
+      "keyword": "menu",
+      "match_type": "contains",
+      "reply_text": "Hamare services ka complete catalog aur menu dekhne ke liye dhanyawad. Team aapse sampark karegi.",
+      "is_active": true,
+      "created_at": "2026-10-31T13:11:15.845Z"
+    },
+    {
+      "id": "ar_location",
+      "keyword": "location",
+      "match_type": "contains",
+      "reply_text": "Hamara office location: Assudani Group Headquarters. Map link aur visit details ke liye reply karein.",
+      "is_active": true,
+      "created_at": "2026-10-31T13:11:15.845Z"
+    },
+    {
+      "id": "ar_help",
+      "keyword": "help",
+      "match_type": "contains",
+      "reply_text": "Namaste! Hamari support team aapki sahayata ke liye uplabdh hai. Kripya apna prashna likhein.",
+      "is_active": true,
+      "created_at": "2026-10-31T13:11:15.845Z"
+    }
+  ],
+  "away_settings": {
+    "away_enabled": true,
+    "away_start_hour": 19,
+    "away_end_hour": 9,
+    "away_days": [
+      0
+    ],
+    "away_message": "Namaste! Humara office abhi closed hai, kal subah 9 baje hum aapse connect karenge.",
+    "welcome_enabled": true,
+    "welcome_message": "Namaste! Assudani WA Manager me aapka swagat hai. Hum aapki kya sahayata kar sakte hain?"
+  },
+  "quick_replies": [
+    {
+      "id": "qr_bank",
+      "shortcut": "/bank",
+      "title": "Bank Account Details",
+      "content": "Bank: HDFC Bank\nAccount Name: Piyush Assudani / Assudani Group\nA/C No: 50200012345678\nIFSC: HDFC0001234\nUPI ID: 9413879444@upi"
+    },
+    {
+      "id": "qr_address",
+      "shortcut": "/address",
+      "title": "Office Address",
+      "content": "Assudani Group HQ, Commercial Tower, Main City Centre. Contact: +91 9413879444"
+    },
+    {
+      "id": "qr_pricing",
+      "shortcut": "/pricing",
+      "title": "Pricing Plans",
+      "content": "Hamare standard packages start hote hain ₹1,999/month se. Enterprise automation packages customized rehte hain."
+    }
+  ]
+}

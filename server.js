@@ -141,9 +141,15 @@ const privacyRoutes = require("./routes/privacy");
 const qrSessionRoutes = require("./routes/qrSession");
 const wpConfigRoutes = require("./routes/wpConfig");
 const sendDirectRoutes = require("./routes/sendDirect");
+const automationRoutes = require("./routes/automation");
+const exportRoutes = require("./routes/exportRoutes");
+const leadWebhookRoutes = require("./routes/leadWebhook");
 
 app.use("/api", apiLimiter, apiRoutes);
 app.use("/api/send", sendDirectRoutes);
+app.use("/api/automation", automationRoutes);
+app.use("/api/export", exportRoutes);
+app.use("/api/integrations", leadWebhookRoutes);
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/contact_lists", contactListsRoutes);
 app.use("/api/contacts", contactRoutes);
@@ -217,15 +223,6 @@ initBullMQ(io);
 // Start WhatsApp Web socket engine with Socket.IO
 baileysService.initBaileys(io).catch((err) => {
   console.warn("⚠️ Baileys engine init notice:", err.message);
-});
-
-// Auto-migrate any legacy localhost media URLs in database to production public domain
-db.query(`
-  UPDATE media_assets SET media_url = REPLACE(media_url, 'http://localhost:5001', 'https://morihix-wp.piyushassudani.in') WHERE media_url LIKE 'http://localhost:5001%';
-  UPDATE campaigns SET media_url = REPLACE(media_url, 'http://localhost:5001', 'https://morihix-wp.piyushassudani.in') WHERE media_url LIKE 'http://localhost:5001%';
-  UPDATE messages SET media_url = REPLACE(media_url, 'http://localhost:5001', 'https://morihix-wp.piyushassudani.in') WHERE media_url LIKE 'http://localhost:5001%';
-`).catch((err) => {
-  console.warn("⚠️ Media URL legacy migration notice:", err.message);
 });
 
 // Server Listen

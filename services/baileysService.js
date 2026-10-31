@@ -213,6 +213,29 @@ const initBaileys = async (io) => {
 
         console.log(`📩 Inbound WhatsApp message from ${senderPhone} (${pushName}): ${text}`);
 
+        // Persist message to local server-side database
+        const localDb = require("../db/localDb");
+        let contact = localDb.findOne("contacts", (c) => c.phone_number === senderPhone);
+        const isFirstMessage = !contact;
+
+        if (!contact) {
+          contact = localDb.insert("contacts", {
+            name: pushName || `WhatsApp User ${senderPhone.slice(-4)}`,
+            phone_number: senderPhone,
+            tags: ["New Lead"],
+            notes: "",
+          });
+        }
+
+        localDb.insert("messages", {
+          contact_id: contact.id,
+          phone_number: senderPhone,
+          direction: "inbound",
+          message: text,
+          status: "read",
+          timestamp: new Date().toISOString(),
+        });
+
         if (ioInstance) {
           ioInstance.emit("wa_inbound_message", {
             from: senderPhone,
@@ -221,6 +244,51 @@ const initBaileys = async (io) => {
             timestamp: new Date().toISOString(),
             raw: msg,
           });
+        }
+
+        // Automatic Chatbot Rule Execution
+        if (text && sock) {
+          // 1. Keyword Auto-Reply Rule Check
+          const matchedRule = localDb.matchAutoReply(text);
+          if (matchedRule) {
+            console.log(`🤖 Chatbot triggered rule for "${matchedRule.keyword}" -> Responding`);
+            setTimeout(async () => {
+              try {
+                await sock.sendMessage(senderJid, { text: matchedRule.reply_text });
+                localDb.insert("messages", {
+                  contact_id: contact.id,
+                  phone_number: senderPhone,
+                  direction: "outbound",
+                  message: matchedRule.reply_text,
+                  status: "sent",
+                  timestamp: new Date().toISOString(),
+                });
+              } catch (autoErr) {
+                console.error("Auto-reply dispatch error:", autoErr.message);
+              }
+            }, 800);
+          } else {
+            // 2. Out-of-Hours / Away or Welcome Greeting Check
+            const awayOrWelcome = localDb.checkAwayOrWelcome(senderPhone, isFirstMessage);
+            if (awayOrWelcome) {
+              console.log(`🌙 Triggered ${awayOrWelcome.type} response for ${senderPhone}`);
+              setTimeout(async () => {
+                try {
+                  await sock.sendMessage(senderJid, { text: awayOrWelcome.message });
+                  localDb.insert("messages", {
+                    contact_id: contact.id,
+                    phone_number: senderPhone,
+                    direction: "outbound",
+                    message: awayOrWelcome.message,
+                    status: "sent",
+                    timestamp: new Date().toISOString(),
+                  });
+                } catch (awayErr) {
+                  console.error("Away/welcome dispatch error:", awayErr.message);
+                }
+              }, 1200);
+            }
+          }
         }
       } catch (inboundErr) {
         console.error("Error processing inbound Baileys message:", inboundErr.message);
