@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
     );
     const rows = result.rows.map(row => ({
       ...row,
-      media_url: row.media_url?.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in") || row.media_url,
+      media_url: row.media_url?.replace(/http:\/\/localhost:\d+/g, "https://wa.piyushassudani.in") || row.media_url,
     }));
     res.json(rows);
   } catch (err) {

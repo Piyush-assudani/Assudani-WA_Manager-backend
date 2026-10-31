@@ -19,7 +19,7 @@ function getBaseUrl() {
   }
   // If deployed or configured with WhatsApp API, use the live public domain
   if (process.env.NODE_ENV === "production" || process.env.WHATSAPP_PHONE_NUMBER_ID) {
-    return "https://morihix-wp.piyushassudani.in";
+    return "https://wa.piyushassudani.in";
   }
   const port = process.env.PORT || 5001;
   return `http://localhost:${port}`;

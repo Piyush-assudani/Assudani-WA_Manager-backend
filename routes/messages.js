@@ -86,7 +86,7 @@ router.get("/:contactId", async (req, res) => {
 
     const normalizedMessages = messagesResult.rows.map(m => ({
       ...m,
-      media_url: m.media_url?.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in") || m.media_url,
+      media_url: m.media_url?.replace(/http:\/\/localhost:\d+/g, "https://wa.piyushassudani.in") || m.media_url,
     }));
 
     res.json({

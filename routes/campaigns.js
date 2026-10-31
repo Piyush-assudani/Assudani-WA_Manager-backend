@@ -232,7 +232,7 @@ router.get("/", async (req, res) => {
     );
     const rows = result.rows.map(c => ({
       ...c,
-      media_url: c.media_url?.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in") || c.media_url,
+      media_url: c.media_url?.replace(/http:\/\/localhost:\d+/g, "https://wa.piyushassudani.in") || c.media_url,
     }));
     res.json(rows);
   } catch (err) {
@@ -270,7 +270,7 @@ router.get("/:id", async (req, res) => {
 
     const camp = campaignResult.rows[0];
     if (camp && camp.media_url) {
-      camp.media_url = camp.media_url.replace(/http:\/\/localhost:\d+/g, "https://morihix-wp.piyushassudani.in");
+      camp.media_url = camp.media_url.replace(/http:\/\/localhost:\d+/g, "https://wa.piyushassudani.in");
     }
 
     res.json({
