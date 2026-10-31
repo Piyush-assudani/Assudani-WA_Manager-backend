@@ -75,13 +75,13 @@
       "id": "qr_bank",
       "shortcut": "/bank",
       "title": "Bank Account Details",
-      "content": "Bank: HDFC Bank\nAccount Name: Piyush Assudani / Assudani Group\nA/C No: 50200012345678\nIFSC: HDFC0001234\nUPI ID: 9413879444@upi"
+      "content": "Bank: HDFC Bank\nAccount Name: Assudani Group\nA/C No: 50200012345678\nIFSC: HDFC0001234\nUPI ID: payment@hdfcbank"
     },
     {
       "id": "qr_address",
       "shortcut": "/address",
       "title": "Office Address",
-      "content": "Assudani Group HQ, Commercial Tower, Main City Centre. Contact: +91 9413879444"
+      "content": "Assudani Group HQ, Commercial Tower, Main City Centre. Contact: Support Desk"
     },
     {
       "id": "qr_pricing",

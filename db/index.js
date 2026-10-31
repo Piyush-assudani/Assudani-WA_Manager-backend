@@ -14,7 +14,7 @@ const query = async (text, params = []) => {
   if (lowerSql.includes("from users")) {
     if (lowerSql.startsWith("select")) {
       const usernameParam = params[0] ? String(params[0]).trim().toLowerCase() : "";
-      const user = localDb.findOne(
+      const user = localDb.indexes.usersByUsername.get(usernameParam) || localDb.findOne(
         "users",
         (u) => u.username?.toLowerCase() === usernameParam
       );
@@ -33,11 +33,11 @@ const query = async (text, params = []) => {
   if (lowerSql.includes("contacts")) {
     if (lowerSql.startsWith("select")) {
       if (lowerSql.includes("where id = $1")) {
-        const contact = localDb.findOne("contacts", (c) => c.id === params[0]);
+        const contact = localDb.indexes.contactsById.get(String(params[0])) || localDb.findOne("contacts", (c) => c.id === params[0]);
         return { rows: contact ? [contact] : [], rowCount: contact ? 1 : 0 };
       }
       if (lowerSql.includes("where phone_number = $1") || lowerSql.includes("where phone_number=$1")) {
-        const contact = localDb.findOne("contacts", (c) => c.phone_number === params[0]);
+        const contact = localDb.indexes.contactsByPhone.get(String(params[0])) || localDb.findOne("contacts", (c) => c.phone_number === params[0]);
         return { rows: contact ? [contact] : [], rowCount: contact ? 1 : 0 };
       }
       const all = localDb.getCollection("contacts");
@@ -79,7 +79,7 @@ const query = async (text, params = []) => {
         return { rows: inbound.slice(0, 100), rowCount: inbound.length };
       }
       if (lowerSql.includes("where contact_id = $1")) {
-        const contactMessages = localDb.find("messages", (m) => m.contact_id === params[0]);
+        const contactMessages = localDb.indexes.messagesByContactId.get(params[0]) || localDb.find("messages", (m) => m.contact_id === params[0]);
         return { rows: contactMessages, rowCount: contactMessages.length };
       }
       const all = localDb.getCollection("messages");

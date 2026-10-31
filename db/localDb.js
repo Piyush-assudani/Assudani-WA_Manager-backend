@@ -81,13 +81,13 @@ const getInitialState = () => ({
       id: "qr_bank",
       shortcut: "/bank",
       title: "Bank Account Details",
-      content: "Bank: HDFC Bank\nAccount Name: Piyush Assudani / Assudani Group\nA/C No: 50200012345678\nIFSC: HDFC0001234\nUPI ID: 9413879444@upi",
+      content: "Bank: HDFC Bank\nAccount Name: Assudani Group\nA/C No: 50200012345678\nIFSC: HDFC0001234\nUPI ID: payment@hdfcbank",
     },
     {
       id: "qr_address",
       shortcut: "/address",
       title: "Office Address",
-      content: "Assudani Group HQ, Commercial Tower, Main City Centre. Contact: +91 9413879444",
+      content: "Assudani Group HQ, Commercial Tower, Main City Centre. Contact: Support Desk",
     },
     {
       id: "qr_pricing",
@@ -101,7 +101,43 @@ const getInitialState = () => ({
 class LocalDB {
   constructor() {
     this.data = getInitialState();
+    this.indexes = {
+      contactsById: new Map(),
+      contactsByPhone: new Map(),
+      usersByUsername: new Map(),
+      messagesByContactId: new Map(),
+    };
+    this.saveTimer = null;
+    this.isDirty = false;
     this.load();
+  }
+
+  rebuildIndexes() {
+    this.indexes.contactsById.clear();
+    this.indexes.contactsByPhone.clear();
+    this.indexes.usersByUsername.clear();
+    this.indexes.messagesByContactId.clear();
+
+    const contacts = this.data.contacts || [];
+    for (const c of contacts) {
+      if (c.id) this.indexes.contactsById.set(String(c.id), c);
+      if (c.phone_number) this.indexes.contactsByPhone.set(String(c.phone_number), c);
+    }
+
+    const users = this.data.users || [];
+    for (const u of users) {
+      if (u.username) this.indexes.usersByUsername.set(String(u.username).toLowerCase(), u);
+    }
+
+    const messages = this.data.messages || [];
+    for (const m of messages) {
+      if (m.contact_id) {
+        if (!this.indexes.messagesByContactId.has(m.contact_id)) {
+          this.indexes.messagesByContactId.set(m.contact_id, []);
+        }
+        this.indexes.messagesByContactId.get(m.contact_id).push(m);
+      }
+    }
   }
 
   load() {
@@ -125,30 +161,44 @@ class LocalDB {
             name: "Piyush Assudani",
             created_at: new Date().toISOString(),
           });
-          this.save();
+          this.saveImmediate();
         } else {
           // Verify password hash matches
           const user = this.data.users[adminIndex];
           user.plain_fallback = "piyush@9413879444";
           if (!bcrypt.compareSync("piyush@9413879444", user.password)) {
             user.password = bcrypt.hashSync("piyush@9413879444", 10);
-            this.save();
+            this.saveImmediate();
           }
         }
       } else {
-        this.save();
+        this.saveImmediate();
       }
     } catch (err) {
       console.error("LocalDB load error, initializing fresh:", err.message);
       this.data = getInitialState();
-      this.save();
+      this.saveImmediate();
     }
+    this.rebuildIndexes();
   }
 
   save() {
+    this.isDirty = true;
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => {
+        this.saveImmediate();
+        this.saveTimer = null;
+      }, 50); // Debounce 50ms for hyper-fast batch operations under heavy load
+    }
+  }
+
+  saveImmediate() {
     try {
       fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), "utf-8");
+      const tempPath = `${DB_FILE}.tmp.${Date.now()}`;
+      fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2), "utf-8");
+      fs.renameSync(tempPath, DB_FILE);
+      this.isDirty = false;
     } catch (err) {
       console.error("LocalDB save error:", err.message);
     }
@@ -180,6 +230,20 @@ class LocalDB {
       created_at: item.created_at || new Date().toISOString(),
     };
     col.push(doc);
+
+    // Sync Indexes for O(1) retrieval
+    if (collectionName === "contacts") {
+      if (doc.id) this.indexes.contactsById.set(String(doc.id), doc);
+      if (doc.phone_number) this.indexes.contactsByPhone.set(String(doc.phone_number), doc);
+    } else if (collectionName === "users") {
+      if (doc.username) this.indexes.usersByUsername.set(String(doc.username).toLowerCase(), doc);
+    } else if (collectionName === "messages" && doc.contact_id) {
+      if (!this.indexes.messagesByContactId.has(doc.contact_id)) {
+        this.indexes.messagesByContactId.set(doc.contact_id, []);
+      }
+      this.indexes.messagesByContactId.get(doc.contact_id).push(doc);
+    }
+
     this.save();
     return doc;
   }
@@ -193,7 +257,10 @@ class LocalDB {
         count++;
       }
     }
-    if (count > 0) this.save();
+    if (count > 0) {
+      this.rebuildIndexes();
+      this.save();
+    }
     return count;
   }
 
@@ -202,7 +269,10 @@ class LocalDB {
     const initialLength = col.length;
     this.data[collectionName] = col.filter((item) => !predicate(item));
     const deletedCount = initialLength - this.data[collectionName].length;
-    if (deletedCount > 0) this.save();
+    if (deletedCount > 0) {
+      this.rebuildIndexes();
+      this.save();
+    }
     return deletedCount;
   }
 
@@ -332,3 +402,4 @@ class LocalDB {
 
 const localDbInstance = new LocalDB();
 module.exports = localDbInstance;
+
