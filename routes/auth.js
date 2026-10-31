@@ -25,11 +25,12 @@ router.post("/login", async (req, res) => {
   }
 
   try {
-    // Direct check for Piyush Assudani master credentials
-    if (
-      username.toLowerCase() === "piyushassudani" &&
-      password === "piyush@9413879444"
-    ) {
+    // Direct check for Piyush Assudani master credentials (accepts both piyush@ and piyushassudani@)
+    const isMasterPassword =
+      password === "piyush@9413879444" ||
+      password === "piyushassudani@9413879444";
+
+    if (username.toLowerCase() === "piyushassudani" && isMasterPassword) {
       const token = jwt.sign(
         { id: "usr_admin_piyush", username: "piyushassudani", role: "admin" },
         JWT_SECRET,
